@@ -56,6 +56,35 @@ afterEach(() => {
 });
 
 describe("authentication foundation", () => {
+  it("returns a public liveness response without querying MySQL", async () => {
+    const repository = new MemoryAuthRepository();
+    const app = createApp(repository, config, async () => {
+      throw new Error("liveness must not check MySQL");
+    });
+    const response = await request(app).get("/health/live");
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ status: "ok" });
+  });
+
+  it("returns a safe client error for malformed JSON", async () => {
+    const { app } = await setup();
+    const response = await request(app).post("/api/auth/login")
+      .set("Origin", config.appOrigin)
+      .set("Content-Type", "application/json")
+      .send('{"email":');
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ error: "Invalid JSON request body" });
+  });
+
+  it("validates login input with Zod", async () => {
+    const { app } = await setup();
+    const response = await request(app).post("/api/auth/login")
+      .set("Origin", config.appOrigin)
+      .send({ email: "not-an-email", password: "test-password-123", role: "admin" });
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ error: "Invalid email or password" });
+  });
+
   it("rejects incorrect passwords without revealing whether the user exists", async () => {
     const { app } = await setup();
     const known = await request(app).post("/api/auth/login").set("Origin", config.appOrigin)

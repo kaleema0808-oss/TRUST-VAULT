@@ -5,11 +5,17 @@ import cookieParser from "cookie-parser";
 import type { AppConfig } from "./config.js";
 import { createAuthRouter } from "./auth/routes.js";
 import { requireAuthentication, requireRole } from "./auth/middleware.js";
-import type { AuthRepository } from "./auth/repository.js";
+import type { AuthRepository, DocumentRepository } from "./auth/repository.js";
+import { createDocumentRouter } from "./documents/routes.js";
 
 export type HealthCheck = () => Promise<void>;
 
-export function createApp(repository: AuthRepository, config: AppConfig, checkDatabase: HealthCheck) {
+export function createApp(
+  repository: AuthRepository,
+  config: AppConfig,
+  checkDatabase: HealthCheck,
+  documentRepository?: DocumentRepository,
+) {
   const app = express();
   app.disable("x-powered-by");
   app.use(helmet());
@@ -46,11 +52,25 @@ export function createApp(repository: AuthRepository, config: AppConfig, checkDa
     legacyHeaders: false,
   }), createAuthRouter(repository, config));
 
+  if (documentRepository) {
+    app.use("/api/documents", createDocumentRouter(repository, documentRepository));
+  }
+
   app.get("/api/admin/check", requireAuthentication(repository), requireRole("admin"), (_request, response) => {
     response.json({ allowed: true });
   });
 
   const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
+    if (typeof error === "object" && error !== null && "type" in error) {
+      if (error.type === "entity.parse.failed") {
+        response.status(400).json({ error: "Invalid JSON request body" });
+        return;
+      }
+      if (error.type === "entity.too.large") {
+        response.status(413).json({ error: "Request body is too large" });
+        return;
+      }
+    }
     console.error("Request failed");
     response.status(500).json({ error: "Internal server error" });
   };

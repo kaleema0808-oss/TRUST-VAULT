@@ -47,4 +47,73 @@ only after actual commits exist.
   skipped (the isolated MySQL constraint test; no test database was configured).
   `npm run typecheck` passed, `npm run build` passed, and `npm audit` reported
   zero vulnerabilities. These are local results, not production verification.
-- **Commit:** `65311266c6a32c64dda526dd29697f306e57c1db`
+- **Commit:** The implementation was later pushed to the existing GitHub
+  repository. Its current history is recorded by commits
+  `65311266c6a32c64dda526dd29697f306e57c1db` and
+  `7594d673e45ae1ef575e796000faacf22f34a45c`.
+
+## 2026-10-23 — Local foundation workspace
+
+- **Prompt/task:** Inspect the existing TrustVault files, preserve existing
+  work, organize the frontend and backend as `client/` and `server/`, verify
+  the database and test setup, and update beginner-friendly setup guidance.
+- **Use:** AI reviewed the existing README, threat model, prompt log, npm
+  workspaces, migration, API, frontend and tests before changing anything.
+  The existing `apps/web` and `apps/api` directories were moved intact to
+  `client/` and `server/`; no files were deleted. Workspace names/scripts,
+  docs, lockfile, basic error handling and focused health/validation tests
+  were updated.
+- **Actual problems discovered and fixes made:**
+  - The working directory is not a Git repository despite the GitHub project
+    existing. Git status/root checks failed; no repository, commits or remotes
+    were created or changed.
+  - The Windows `MySQL267` service is running, but the `mysql` CLI was not on
+    `PATH`; the example credentials failed a safe `SELECT 1` connection
+    attempt with `ER_ACCESS_DENIED_ERROR`. No database connection or migration
+    is claimed. The README now explains how to configure a local database
+    account and verify readiness.
+  - After moving the API folder, its `.env` resolver would have looked outside
+    the project root. Corrected the path and verified the API loads without an
+    `.env` file for liveness testing.
+  - The first liveness smoke attempt exposed that development configuration
+    rejected an empty DB password before the API could start. Allowed the
+    development default while preserving the explicit nonempty-password
+    requirement in production.
+  - Malformed JSON requests previously fell through to a generic server error.
+    They now receive a generic `400` response; oversized bodies receive `413`.
+- **Verification:** `npm test` reported 8 passed and 1 skipped (MySQL
+  integration test; no isolated test schema configured). `npm run typecheck`
+  and `npm run build` passed. `npm audit` reported zero vulnerabilities. Live
+  HTTP smoke test returned `GET /health/live` 200 and `GET /health/ready` 503,
+  consistent with the failed MySQL authentication. No migration, deployment,
+  commit or push was performed.
+- **Commit:** None, as requested.
+
+## 2026-10-23 — Database setup verification
+
+- **Prompt/task:** Inspect the existing MySQL configuration, verify only the
+  currently configured credentials using a read-only connection, inspect the
+  migration before application, run the existing checks, and accurately
+  document database/Git status.
+- **Use:** AI inspected the root README and `.env.example`, server config and
+  env loader, pool, migration runner and SQL, and the MySQL integration test.
+  AI attempted only `SELECT 1`; it did not create or change MySQL users or
+  databases, apply migrations, delete data, or alter Git history.
+- **Actual observations:** Windows reports `MySQL267` running, but the MySQL
+  CLI is not on PATH and the root `.env` does not exist. The app therefore
+  tried host `127.0.0.1`, port `3306`, database `trustvault`, user
+  `trustvault_app`, with `DATABASE_PASSWORD` unset; authentication failed
+  with `ER_ACCESS_DENIED_ERROR`. The example password is a placeholder and was
+  not used as an actual credential. No migration was applied. The migration
+  SQL was inspected and contains only table-creation statements for the five
+  requested tables.
+- **Verification:** `npm test` reported 8 passed, 1 skipped (no isolated
+  `MYSQL_TEST_DATABASE`). `npm run typecheck` and `npm run build` passed;
+  `npm audit` reported zero vulnerabilities. Git status, remote and repository
+  root checks failed because this workspace folder has no `.git`; no history
+  or remotes were changed.
+- **Documentation update:** README now lists exact connection settings,
+  explains the authentication failure and provides read-only existence checks
+  plus safe Workbench steps. Database/user creation and migration remain
+  pending explicit target confirmation and valid local credentials.
+- **Commit:** None; no commit or push was performed.

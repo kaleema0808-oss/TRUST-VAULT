@@ -9,7 +9,7 @@ const environmentSchema = z.object({
   DATABASE_PORT: z.coerce.number().int().min(1).max(65535).default(3306),
   DATABASE_NAME: z.string().regex(/^[A-Za-z0-9_]+$/).default("trustvault"),
   DATABASE_USER: z.string().default("trustvault_app"),
-  DATABASE_PASSWORD: z.string().min(1).default(""),
+  DATABASE_PASSWORD: z.string().default(""),
   DATABASE_TLS: z.enum(["true", "false"]).default("false"),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
 });

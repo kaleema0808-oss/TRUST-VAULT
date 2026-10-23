@@ -3,4 +3,4 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const apiDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-dotenv.config({ path: resolve(apiDirectory, "../../.env") });
+dotenv.config({ path: resolve(apiDirectory, "../.env") });

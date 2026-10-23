@@ -1,25 +1,35 @@
-# TrustVault
+# TrustVault — Milestone 1: Working Local Foundation
 
 TrustVault is a private document-sharing application for the Snovasys Fresher
 Hiring Challenge 2026. It is being built in milestones, prioritizing access
 control and explainable security decisions over feature count.
 
-## Current milestone
+## Milestone 1 status
 
 - [x] Workspace inspection and architecture recommendation
 - [x] React/Vite and Express/TypeScript project setup
-- [x] MySQL connection configuration and initial versioned schema migration
+- [x] MySQL connection-pool configuration and initial versioned schema migration file
 - [x] Authentication foundation: password hashes, database-backed sessions,
   logout, expiry, CSRF token and role middleware
 - [x] API health checks and isolated-auth tests
 - [ ] Configure and run isolated MySQL integration tests
-- [ ] Add document endpoints only alongside authorization tests
+- [x] Add metadata endpoints with server-side owner/grant authorization and route tests
+- [x] Add transaction-bound permission audit records and hash-chain verification helper
+- [ ] Verify MySQL repository queries and transaction rollback against an isolated MySQL database
+- [ ] Add private file storage and authorized download/preview routes
 - [ ] Private object storage, permission management and audit hash chain
 - [ ] Deployment and live security verification
 
-The database integration test was skipped in this environment because no
-isolated MySQL test database was configured. No document endpoints, file
-storage, audit-chain implementation, or deployment is claimed complete.
+Document metadata and permission routes now exist with server-side access
+checks, immediate permission re-evaluation, denied-attempt auditing, and a
+hash-chain verification helper. Route tests use an in-memory repository, so
+they do not prove MySQL execution or persistence. The Windows MySQL service is
+running, but no root `.env` exists and `SELECT 1` failed with
+`ER_ACCESS_DENIED_ERROR`; no migration has been applied. Route security tests
+and local compilation pass, but the MySQL-specific integration test remains
+skipped until a dedicated test schema and valid credentials are configured.
+File storage, download/preview routes, live database verification, and
+deployment remain unfinished.
 
 ## Architecture
 
@@ -49,7 +59,7 @@ timing differences.
 ## MySQL schema in beginner-friendly terms
 
 The migration in
-[`apps/api/src/db/migrations/001_initial_schema.sql`](./apps/api/src/db/migrations/001_initial_schema.sql)
+[`server/src/db/migrations/001_initial_schema.sql`](./server/src/db/migrations/001_initial_schema.sql)
 creates these InnoDB tables:
 
 - **`users`**: one account per row. `id` is its primary key (unique row
@@ -81,10 +91,10 @@ relationships real database rules, not just assumptions in code. A **unique
 constraint** prevents duplicate identities/grants. An **index** is an
 additional lookup structure that speeds selected queries at the cost of extra
 storage and slower writes. A **join** lets the application query a permission
-row together with its user/document; no document permission or document
-endpoints exist yet. A **transaction** groups related writes so they succeed
-or roll back together; the later permission-change plus audit write will need
-one. This milestone's seed writes are not presented as that feature.
+row together with its user/document. A **transaction** groups related
+permission and audit writes so they succeed or roll back together. Although
+these repository queries are implemented, the MySQL migration and transactions
+have not been run against a configured database yet.
 
 ## Prerequisites
 
@@ -95,28 +105,104 @@ one. This milestone's seed writes are not presented as that feature.
 Never point tests at production. Use separate least-privilege local application
 and test database accounts in a real deployment.
 
-## Local setup (Windows PowerShell)
+### MySQL status on the inspected machine
 
-From a clean clone, run:
+The Windows service `MySQL267` is running, but the `mysql` command-line client
+was not found on `PATH`. No root `.env` file exists. The app therefore used
+these defaults for the safe connection test:
 
-```powershell
-npm ci
-Copy-Item .env.example .env
+| Setting | Expected value |
+| --- | --- |
+| Host | `127.0.0.1` |
+| Port | `3306` |
+| Database | `trustvault` |
+| Username | `trustvault_app` |
+| Password | `DATABASE_PASSWORD` (unset; application default is empty) |
+| TLS | `DATABASE_TLS=false` for local development |
+
+The `.env.example` value `replace-with-a-local-password` is only a placeholder;
+it is not a valid password or an existing credential. `SELECT 1` failed with
+`ER_ACCESS_DENIED_ERROR`, so MySQL is running but TrustVault has **not**
+authenticated or connected to its database. No schema or migration has been
+applied. Do not treat the MySQL integration test as passing while it is skipped.
+
+### Safe local database setup
+
+These instructions require an administrator login in MySQL Workbench (or the
+MySQL command-line client). Do not paste an administrator password into this
+chat or commit it. Before creating anything, check whether the `trustvault`
+database and `trustvault_app`@`127.0.0.1` account already exist. Do not drop,
+rename, or overwrite an existing database or account. If either already exists
+and you do not know its purpose, stop and ask before changing it.
+
+In Workbench, connect to your local MySQL server with your administrator
+account, open a SQL tab, and run these **read-only checks** first:
+
+```sql
+SELECT SCHEMA_NAME
+FROM INFORMATION_SCHEMA.SCHEMATA
+WHERE SCHEMA_NAME = 'trustvault';
+
+SELECT User, Host
+FROM mysql.user
+WHERE User = 'trustvault_app' AND Host = '127.0.0.1';
 ```
 
-Create a local database and a restricted application user from your MySQL
-administrative client. Replace the local password with your own value; this
-example is for a disposable local developer database only:
+If both checks show no matching rows and you approve creating a fresh local
+TrustVault database/account, run the following in Workbench. Replace the
+example password with a unique local development password there; do not reuse
+your Windows or GitHub password:
 
 ```sql
 CREATE DATABASE trustvault CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
-CREATE USER 'trustvault_app'@'localhost' IDENTIFIED BY 'replace-with-a-unique-local-password';
+CREATE USER 'trustvault_app'@'127.0.0.1' IDENTIFIED BY 'replace-with-a-unique-local-password';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
-  ON trustvault.* TO 'trustvault_app'@'localhost';
+  ON trustvault.* TO 'trustvault_app'@'127.0.0.1';
 ```
 
-Edit `.env` to set `DATABASE_PASSWORD` to the password used for the local
-database account. Do not add `.env` to Git. Then:
+The application host is `127.0.0.1`, so the user is restricted to that local
+TCP host rather than `%` (any host). The privilege grant is limited to this
+database. `CREATE`, `ALTER`, `INDEX`, and `REFERENCES` support the migration
+runner; runtime access should later be split from migration privileges.
+
+In the project root, copy `.env.example` to `.env` if it does not exist. Set
+`DATABASE_PASSWORD` in `.env` to the local app-user password you just chose;
+do not print it, commit it, or send it in chat. Confirm
+`DATABASE_HOST=127.0.0.1`, `DATABASE_PORT=3306`,
+`DATABASE_NAME=trustvault`, `DATABASE_USER=trustvault_app`, and
+`DATABASE_TLS=false`.
+
+The migration command is `npm run db:migrate` (root script delegates to
+`npm run db:migrate -w @trustvault/server`, which runs `tsx src/db/migrate.ts`).
+It creates `schema_migrations` and applies numbered SQL files not already
+recorded. The currently inspected
+[`001_initial_schema.sql`](./server/src/db/migrations/001_initial_schema.sql)
+contains only `CREATE TABLE` statements for `users`, `sessions`, `documents`,
+`document_permissions`, and `audit_events`, with keys and constraints; it
+contains no `DROP`, `DELETE`, or `ALTER` of existing application data. I have
+not run it because the configured account could not authenticate and no
+dedicated target is currently confirmed.
+
+After the dedicated account is configured, run `npm run db:migrate`, then
+check `http://localhost:3001/health/ready`; a `200` with
+`{"status":"ok","database":"connected"}` verifies the connection. The isolated
+integration-test schema is separate and must be created explicitly before
+running the optional database test.
+
+## Local setup (Windows PowerShell)
+
+From the project root in a clean clone, run:
+
+```powershell
+npm ci
+```
+
+Follow [Safe local database setup](#safe-local-database-setup) above to inspect
+the target and create a dedicated local database/account only if it does not
+already exist. Copy `.env.example` to `.env` if needed, then set the matching
+local app-account password in `.env`. Never commit or share `.env`. Commands
+load it from the project root, including when run from the server workspace.
+After confirming the dedicated target:
 
 ```powershell
 npm run db:migrate
@@ -138,10 +224,15 @@ Seeded development emails are `admin@trustvault.local`,
 production mode, requires strong nonempty environment-supplied passwords,
 hashes them, and does not print or commit them.
 
-Start the app and run checks:
+Start the app in one PowerShell terminal:
 
 ```powershell
 npm run dev
+```
+
+Run checks in another terminal from the project root:
+
+```powershell
 npm run test
 npm run typecheck
 npm run build
@@ -154,6 +245,13 @@ check. `GET /health/ready` runs only `SELECT 1` and returns a generic
 unavailable response if MySQL cannot be reached; it does not expose SQL
 details.
 
+If you want to start just one side while learning, use a separate terminal:
+
+```powershell
+npm run dev -w @trustvault/client
+npm run dev -w @trustvault/server
+```
+
 ### Optional MySQL constraint test
 
 Use a separate disposable schema whose name begins `trustvault_test_`; never
@@ -163,7 +261,7 @@ account access in local MySQL:
 ```sql
 CREATE DATABASE trustvault_test_local CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
-  ON trustvault_test_local.* TO 'trustvault_app'@'localhost';
+  ON trustvault_test_local.* TO 'trustvault_app'@'127.0.0.1';
 ```
 
 Apply the migration to that isolated schema and run tests:
@@ -177,7 +275,8 @@ Remove-Item Env:DATABASE_NAME
 Remove-Item Env:MYSQL_TEST_DATABASE
 ```
 
-The optional integration test refuses database names outside the test prefix.
+The optional integration test loads settings from the root `.env` and refuses
+database names outside the test prefix.
 If the variable is absent, Vitest reports the constraint test as skipped; that
 is not a passing database-constraint verification.
 
@@ -192,10 +291,30 @@ is not a passing database-constraint verification.
 | `GET /api/auth/csrf` | Authenticated session | Rotates and returns that session's CSRF token |
 | `POST /api/auth/logout` | Authenticated session + valid CSRF token + configured `Origin` | Deletes current session and clears cookie |
 | `GET /api/admin/check` | Authenticated `admin` role | Small role-middleware check; returns 403 to other roles |
+| `GET /api/documents` | Authenticated user | Lists documents readable by this user; collection access is audited |
+| `POST /api/documents` | `admin` or `owner`, valid CSRF token | Creates metadata owned by the authenticated account; client owner/role fields are rejected |
+| `GET /api/documents/:documentId` | Authenticated owner, admin, or user with current read grant | Returns authorized metadata only; inaccessible IDs return generic 404 and are audited |
+| `PATCH /api/documents/:documentId` | `admin`, owning `owner`, or `owner` with explicit edit grant; valid CSRF token | Edits metadata and audits in one DB transaction |
+| `DELETE /api/documents/:documentId` | Same edit access as metadata edit; valid CSRF token | Deletes metadata and audits in one DB transaction |
+| `PUT /api/documents/:documentId/permissions/:userId` | `admin`, owning `owner`, or `owner` with explicit edit grant; valid CSRF token | Creates/updates a named user's read/edit grant and audits transactionally |
+| `DELETE /api/documents/:documentId/permissions/:userId` | Same permission-management access; valid CSRF token | Revokes grant; next request uses current DB state and is denied |
 
-All listed routes are backed by the API; there are no document/download
-endpoints yet. This is an implementation inventory, not a claim that the whole
-application is secure.
+The global `viewer` role is read-only even if someone submits an edit grant.
+Only an `owner` may use a separate explicit edit grant on a document they do
+not own; `admin` can manage all records. Every request checks current
+session/grant state in the repository; permission revocation therefore affects
+the next API request. A normal inaccessible/missing-document response is
+generic 404. Authenticated denials are written to audit events without putting
+the guessed document ID into the foreign-key column. Grant/revoke and edit
+changes plus their audit entries share a transaction. Audit hashes detect
+partial event alteration, but a privileged actor who can rewrite the entire
+database can recompute an unanchored chain.
+
+The source folders are `client/` (React/Vite frontend) and `server/` (Express
+API). These metadata routes return no storage object key or file URL. No
+upload, download, or preview endpoint exists because private file storage is
+not yet configured. Route tests currently use an in-memory repository;
+production MySQL behavior remains unverified.
 
 ## Security and deployment caveats
 

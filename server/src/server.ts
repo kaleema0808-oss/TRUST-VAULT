@@ -1,11 +1,16 @@
 import "./load-env.js";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
-import { MysqlAuthRepository } from "./auth/repository.js";
+import { MysqlAuthRepository, MysqlDocumentRepository } from "./auth/repository.js";
 import { checkDatabaseConnection, pool } from "./db/pool.js";
 
 const config = loadConfig();
-const app = createApp(new MysqlAuthRepository(pool), config, checkDatabaseConnection);
+const app = createApp(
+  new MysqlAuthRepository(pool),
+  config,
+  checkDatabaseConnection,
+  new MysqlDocumentRepository(pool),
+);
 const server = app.listen(config.apiPort, "0.0.0.0", () => {
   console.info(`TrustVault API listening on port ${config.apiPort}`);
 });
