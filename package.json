@@ -1,0 +1,20 @@
+{
+  "name": "trustvault",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"npm run dev -w @trustvault/api\" \"npm run dev -w @trustvault/web\"",
+    "build": "npm run build -w @trustvault/api && npm run build -w @trustvault/web",
+    "test": "npm run test -w @trustvault/api",
+    "typecheck": "npm run typecheck -w @trustvault/api && npm run typecheck -w @trustvault/web",
+    "db:migrate": "npm run db:migrate -w @trustvault/api",
+    "seed:dev": "npm run seed:dev -w @trustvault/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
