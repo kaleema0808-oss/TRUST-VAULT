@@ -47,5 +47,4 @@ only after actual commits exist.
   skipped (the isolated MySQL constraint test; no test database was configured).
   `npm run typecheck` passed, `npm run build` passed, and `npm audit` reported
   zero vulnerabilities. These are local results, not production verification.
-- **Commit:** Added only after the actual repository commit is created and
-  verified.
+- **Commit:** `65311266c6a32c64dda526dd29697f306e57c1db`
