@@ -1,4 +1,4 @@
-﻿
+
 import { useCallback, useEffect, useState } from "react";
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -35,6 +35,7 @@ function App() {
   const [shareUserId, setShareUserId] = useState("");
   const [shareCanRead, setShareCanRead] = useState(true);
   const [shareCanEdit, setShareCanEdit] = useState(false);
+  const [uploadingId, setUploadingId] = useState<number | null>(null);
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -145,6 +146,29 @@ function App() {
     }
   }
 
+  async function uploadFile(docId: number, file: File) {
+    setError("");
+    setNotice("");
+    setUploadingId(docId);
+    try {
+      const result = await docs.upload(docId, file);
+      setDocuments((prev) => prev.map((doc) => (doc.id === docId ? result.document : doc)));
+      setNotice(`File "${file.name}" uploaded successfully.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "File upload failed.");
+    } finally {
+      setUploadingId(null);
+    }
+  }
+
+  async function downloadFile(document: Document) {
+    setError("");
+    try {
+      await docs.download(document.id, document.originalName || `${document.name}.bin`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Download failed.");
+    }
+  }
   async function openSharing(document: Document) {
     setError("");
     setNotice("");
@@ -410,7 +434,36 @@ function App() {
                               : ""}
                           </span>
                         </div>
-                        <div className="toolbar">
+                        {document.originalName && (
+                          <div style={{ marginTop: "6px", fontSize: "var(--text-xs)", color: "var(--accent-success)" }}>
+                            Attached: {document.originalName}{" "}
+                            {document.fileSize ? `(${Math.round(document.fileSize / 1024)} KB)` : ""}
+                          </div>
+                        )}
+                        <div className="toolbar" style={{ flexWrap: "wrap", gap: "8px" }}>
+                          {document.originalName && (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => void downloadFile(document)}
+                            >
+                              Download
+                            </button>
+                          )}
+                          <label className="btn btn-secondary btn-sm" style={{ cursor: "pointer", margin: 0 }}>
+                            {uploadingId === document.id ? "Uploading..." : document.originalName ? "Replace file" : "Upload file"}
+                            <input
+                              type="file"
+                              style={{ display: "none" }}
+                              disabled={uploadingId === document.id}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  void uploadFile(document.id, file);
+                                }
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
                           <button
                             className="btn btn-secondary btn-sm"
                             onClick={() => startEdit(document)}

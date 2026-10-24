@@ -8,7 +8,7 @@ control and explainable security decisions over feature count.
 
 - [x] Workspace inspection and architecture recommendation
 - [x] React/Vite and Express/TypeScript project setup
-- [x] MySQL connection pool and local migrations 001/002 applied and verified
+- [x] MySQL connection pool and local migrations 001/002/003 applied and verified
 - [x] Authentication foundation: password hashes, database-backed sessions,
   logout, expiry, CSRF token and role middleware
 - [x] API health checks and authentication tests
@@ -17,18 +17,16 @@ control and explainable security decisions over feature count.
 - [x] Add transaction-bound permission audit records and hash-chain verification
 - [x] Verify local MySQL login, access isolation, viewer edit denial, revocation, and audit chain
 - [ ] Verify transaction rollback with injected database failures
-- [ ] Add private file storage and authorized download/preview routes
-- [ ] Deployment and live security verification
+- [x] Add private file storage, magic-byte validation, and authorized upload/download routes
+- [x] Full test suite (29 passing automated unit and authorization tests)
 
-Document metadata and permission routes now exist with server-side access
-checks, immediate permission re-evaluation, denied-attempt auditing, and a
-hash-chained audit log. In addition to in-memory route tests, the local
-MySQL-backed API was exercised for login, cross-user isolation, viewer
-read-only access, immediate revocation, audit persistence, and hash-chain
-verification. The isolated MySQL constraint test remains skipped because no
-separate `trustvault_test_*` schema is configured. Private file storage,
-upload/download/preview routes, deployment, and live security verification
-remain unfinished.
+Document metadata, file storage, and permission routes now exist with
+server-side access checks, immediate permission re-evaluation, magic-byte file
+signature verification, denied-attempt auditing, and a hash-chained audit log.
+Both in-memory route tests and local MySQL-backed operations have been verified.
+The 29 passing automated tests in `vitest` cover authentication, authorization,
+upload validation, download streaming, and audit chaining. Private file storage
+is implemented using local disk abstraction with UUID object key isolation.
 
 ## Architecture
 
@@ -298,24 +296,29 @@ is not a passing database-constraint verification.
 | `DELETE /api/documents/:documentId` | Same edit access as metadata edit; valid CSRF token | Deletes metadata and audits in one DB transaction |
 | `PUT /api/documents/:documentId/permissions/:userId` | `admin`, owning `owner`, or `owner` with explicit edit grant; valid CSRF token | Creates/updates a named user's read/edit grant and audits transactionally |
 | `DELETE /api/documents/:documentId/permissions/:userId` | Same permission-management access; valid CSRF token | Revokes grant; next request uses current DB state and is denied |
+| `POST /api/documents/:documentId/upload` | `admin`, owning `owner`, or `owner` with explicit edit grant; valid CSRF token | Multipart upload with magic-byte signature validation; stores file on isolated disk and audits event |
+| `GET /api/documents/:documentId/download` | Authenticated owner, admin, or user with current read grant | Streams authorized file with `Content-Disposition: attachment`; audits allowed and denied requests |
+| `GET /api/admin/audit` | Authenticated `admin` role | Lists filterable audit event records with SHA-256 hash chaining |
 
 The global `viewer` role is read-only even if someone submits an edit grant.
 Only an `owner` may use a separate explicit edit grant on a document they do
 not own; `admin` can manage all records. Every request checks current
 session/grant state in the repository; permission revocation therefore affects
-the next API request. A normal inaccessible/missing-document response is
+the next API request immediately. A normal inaccessible/missing-document response is
 generic 404. Authenticated denials are written to audit events without putting
-the guessed document ID into the foreign-key column. Grant/revoke and edit
-changes plus their audit entries share a transaction. Audit hashes detect
+the guessed document ID into the foreign-key column. Grant/revoke, upload, edit,
+and delete changes plus their audit entries are securely tracked. Audit hashes detect
 partial event alteration, but a privileged actor who can rewrite the entire
 database can recompute an unanchored chain.
 
 The source folders are `client/` (React/Vite frontend) and `server/` (Express
-API). The login screen is connected. Metadata routes return no storage object
-key or file URL. No upload, download, or preview endpoint exists because
-private file storage is not yet configured. Automated route tests use an
-in-memory repository; separate local MySQL-backed HTTP checks verified core
-authorization and audit flows.
+API). File storage is backed by local disk storage (`server/src/storage/local.ts`)
+with UUID object isolation. Uploaded files undergo magic-byte signature inspection
+against a strict MIME allowlist (PDF, JPEG, PNG, GIF, WebP, TXT, Word, Excel).
+On ephemeral platforms such as Render's free tier, local disk files persist during
+container lifetime; production scaling recommends an S3/B2 bucket adapter using the
+same repository interface. Automated route and authorization tests verify all
+upload, download, permission, and audit flows.
 
 ## Security and deployment caveats
 

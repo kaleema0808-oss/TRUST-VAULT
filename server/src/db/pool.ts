@@ -16,7 +16,15 @@ const options: PoolOptions = {
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  ...(env.DATABASE_TLS === "true" ? { ssl: { minVersion: "TLSv1.2" } } : {}),
+  ...(env.DATABASE_TLS === "true"
+    ? {
+        ssl: {
+          minVersion: "TLSv1.2",
+          rejectUnauthorized: env.DATABASE_TLS_REJECT_UNAUTHORIZED !== "false",
+          ...(env.DATABASE_TLS_CA ? { ca: env.DATABASE_TLS_CA } : {}),
+        },
+      }
+    : {}),
 };
 
 export const pool = mysql.createPool(options);

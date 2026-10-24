@@ -35,6 +35,7 @@ export type UserRole = "admin" | "owner" | "viewer";
 export type User = { id: number; email: string; role: UserRole };
 export type Document = {
   id: number; ownerId: number; name: string; category: string;
+  originalName?: string | null; mimeType?: string | null; fileSize?: number | null;
   createdAt: string; updatedAt: string;
 };
 export type Permission = {
@@ -102,6 +103,44 @@ export const docs = {
     await request<void>(`/api/documents/${documentId}/permissions/${userId}`, {
       method: "DELETE",
     });
+  },
+  async upload(documentId: number, file: File) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const headers: Record<string, string> = {};
+    if (csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
+    }
+    const res = await fetch(`${BASE}/api/documents/${documentId}/upload`, {
+      method: "POST",
+      headers,
+      credentials: "include",
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Upload failed" }));
+      throw Object.assign(new Error(err.error ?? "Upload failed"), { status: res.status, data: err });
+    }
+    return res.json() as Promise<{ document: Document }>;
+  },
+  async download(documentId: number, filename?: string) {
+    const res = await fetch(`${BASE}/api/documents/${documentId}/download`, {
+      method: "GET",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Download failed" }));
+      throw Object.assign(new Error(err.error ?? "Download failed"), { status: res.status, data: err });
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = window.document.createElement("a");
+    a.href = url;
+    a.download = filename || `document-${documentId}`;
+    window.document.body.appendChild(a);
+    a.click();
+    window.document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
   },
 };
 

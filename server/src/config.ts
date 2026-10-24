@@ -12,6 +12,8 @@ const environmentSchema = z.object({
   DATABASE_USER: z.string().default("trustvault_app"),
   DATABASE_PASSWORD: z.string().default(""),
   DATABASE_TLS: z.enum(["true", "false"]).default("false"),
+  DATABASE_TLS_CA: z.string().optional(),
+  DATABASE_TLS_REJECT_UNAUTHORIZED: z.enum(["true", "false"]).default("true"),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
 });
 

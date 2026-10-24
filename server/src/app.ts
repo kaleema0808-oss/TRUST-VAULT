@@ -64,8 +64,8 @@ export function createApp(
     try {
       await checkDatabase();
       response.json({ status: "ok", database: "connected" });
-    } catch {
-      console.error("Database readiness check failed");
+    } catch (error) {
+      console.error("Database readiness check failed:", error);
       response.status(503).json({ status: "unavailable" });
     }
   });

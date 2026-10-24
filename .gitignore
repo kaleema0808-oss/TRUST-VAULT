@@ -9,7 +9,9 @@ coverage/
 .DS_Store
 Thumbs.db
 uploads/
-storage/
+/storage/
+!server/src/storage/
+*.backup*
 .secrets/
 secrets/
 *.pem

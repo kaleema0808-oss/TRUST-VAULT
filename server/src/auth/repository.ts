@@ -17,10 +17,19 @@ export type DocumentRecord = {
   ownerId: number;
   name: string;
   category: string;
+  originalName: string | null;
+  mimeType: string | null;
+  fileSize: number | null;
   createdAt: string;
   updatedAt: string;
 };
 export type DocumentInput = { name: string; category: string };
+export type FileMetadataInput = {
+  objectKey: string;
+  originalName: string;
+  mimeType: string;
+  fileSize: number;
+};
 export type AuditInput = {
   actorUserId: number | null;
   documentId: number | null;
@@ -54,6 +63,10 @@ export interface DocumentRepository {
   appendAudit(event: AuditInput): Promise<void>;
   listAuditEvents(filters: AuditFilter): Promise<AuditEvent[]>;
   listPermissions(documentId: number, userId: number, role: DocumentRole): Promise<PermissionRecord[]>;
+  /** Attach file metadata after a successful upload. Checks edit permission. */
+  updateFileMetadata(documentId: number, userId: number, role: DocumentRole, meta: FileMetadataInput): Promise<boolean>;
+  /** Return the object key for a document the user can read. Null if no access or no file. */
+  getObjectKeyForDownload(documentId: number, userId: number, role: DocumentRole): Promise<{ objectKey: string; originalName: string; mimeType: string } | null>;
 }
 
 export type AuditFilter = {
@@ -160,6 +173,9 @@ type DocumentRow = RowDataPacket & {
   owner_id: number;
   name: string;
   category: string;
+  original_name: string | null;
+  mime_type: string | null;
+  file_size: number | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -170,6 +186,9 @@ function toDocument(row: DocumentRow): DocumentRecord {
     ownerId: row.owner_id,
     name: row.name,
     category: row.category,
+    originalName: row.original_name ?? null,
+    mimeType: row.mime_type ?? null,
+    fileSize: row.file_size ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -202,7 +221,7 @@ export class MysqlDocumentRepository implements DocumentRepository {
 
   async listAccessible(userId: number, role: DocumentRole): Promise<DocumentRecord[]> {
     const [rows] = await this.pool.execute<DocumentRow[]>(
-      `SELECT d.id, d.owner_id, d.name, d.category, d.created_at, d.updated_at
+      `SELECT d.id, d.owner_id, d.name, d.category, d.original_name, d.mime_type, d.file_size, d.created_at, d.updated_at
        FROM documents d WHERE ${readPermissionSql}
        ORDER BY d.created_at DESC, d.id DESC`,
       [role, userId, userId],
@@ -212,7 +231,7 @@ export class MysqlDocumentRepository implements DocumentRepository {
 
   async getAccessible(documentId: number, userId: number, role: DocumentRole): Promise<DocumentRecord | null> {
     const [rows] = await this.pool.execute<DocumentRow[]>(
-      `SELECT d.id, d.owner_id, d.name, d.category, d.created_at, d.updated_at
+      `SELECT d.id, d.owner_id, d.name, d.category, d.original_name, d.mime_type, d.file_size, d.created_at, d.updated_at
        FROM documents d WHERE d.id = ? AND ${readPermissionSql} LIMIT 1`,
       [documentId, role, userId, userId],
     );
@@ -229,7 +248,7 @@ export class MysqlDocumentRepository implements DocumentRepository {
       );
       const insertId = (result as { insertId: number }).insertId;
       const [rows] = await connection.execute<DocumentRow[]>(
-        "SELECT id, owner_id, name, category, created_at, updated_at FROM documents WHERE id = ?",
+        "SELECT id, owner_id, name, category, original_name, mime_type, file_size, created_at, updated_at FROM documents WHERE id = ?",
         [insertId],
       );
       const record = rows[0];
@@ -251,6 +270,69 @@ export class MysqlDocumentRepository implements DocumentRepository {
     }
   }
 
+  async updateFileMetadata(
+    documentId: number,
+    userId: number,
+    role: DocumentRole,
+    meta: FileMetadataInput,
+  ): Promise<boolean> {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      // Verify edit permission
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT d.id FROM documents d WHERE d.id = ? AND ${editPermissionSql} FOR UPDATE`,
+        [documentId, role, role, userId, userId],
+      );
+      if (rows.length === 0) {
+        await connection.rollback();
+        return false;
+      }
+      await connection.execute(
+        `UPDATE documents SET object_key = ?, original_name = ?, mime_type = ?, file_size = ? WHERE id = ?`,
+        [meta.objectKey, meta.originalName, meta.mimeType, meta.fileSize, documentId],
+      );
+      await this.appendAuditWithConnection(connection, {
+        actorUserId: userId,
+        documentId,
+        action: "document.upload",
+        outcome: "allowed",
+        details: { documentId, originalName: meta.originalName, mimeType: meta.mimeType, fileSize: meta.fileSize },
+      });
+      await connection.commit();
+      return true;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async getObjectKeyForDownload(
+    documentId: number,
+    userId: number,
+    role: DocumentRole,
+  ): Promise<{ objectKey: string; originalName: string; mimeType: string } | null> {
+    const [rows] = await this.pool.execute<(RowDataPacket & {
+      object_key: string; original_name: string | null; mime_type: string | null;
+    })[]>(
+      `SELECT d.object_key, d.original_name, d.mime_type
+       FROM documents d
+       WHERE d.id = ? AND ${readPermissionSql}
+         AND d.original_name IS NOT NULL AND d.object_key NOT LIKE 'pending-%'
+       LIMIT 1`,
+      [documentId, role, userId, userId],
+    );
+    const row = rows[0];
+    if (!row || !row.original_name || !row.mime_type) return null;
+    return {
+      objectKey: row.object_key,
+      originalName: row.original_name,
+      mimeType: row.mime_type,
+    };
+  }
+
   async update(documentId: number, userId: number, role: DocumentRole, input: DocumentInput): Promise<DocumentRecord | null> {
     const connection = await this.pool.getConnection();
     try {
@@ -265,7 +347,7 @@ export class MysqlDocumentRepository implements DocumentRepository {
         return null;
       }
       const [rows] = await connection.execute<DocumentRow[]>(
-        "SELECT id, owner_id, name, category, created_at, updated_at FROM documents WHERE id = ?",
+        "SELECT id, owner_id, name, category, original_name, mime_type, file_size, created_at, updated_at FROM documents WHERE id = ?",
         [documentId],
       );
       const record = rows[0];

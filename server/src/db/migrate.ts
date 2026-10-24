@@ -16,7 +16,15 @@ const connection = await mysql.createConnection({
   database: env.DATABASE_NAME,
   user: env.DATABASE_USER,
   password: env.DATABASE_PASSWORD,
-  ...(env.DATABASE_TLS === "true" ? { ssl: { minVersion: "TLSv1.2" } } : {}),
+  ...(env.DATABASE_TLS === "true"
+    ? {
+        ssl: {
+          minVersion: "TLSv1.2",
+          rejectUnauthorized: env.DATABASE_TLS_REJECT_UNAUTHORIZED !== "false",
+          ...(env.DATABASE_TLS_CA ? { ca: env.DATABASE_TLS_CA } : {}),
+        },
+      }
+    : {}),
 });
 
 try {

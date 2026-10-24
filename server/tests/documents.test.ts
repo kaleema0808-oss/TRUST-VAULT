@@ -12,9 +12,11 @@ import type {
   DocumentRecord,
   DocumentRepository,
   DocumentRole,
+  FileMetadataInput,
 } from "../src/auth/repository.js";
 import { hashPassword } from "../src/security/password.js";
 import { createAuditEventHash, verifyAuditChain, type ChainAuditEvent } from "../src/security/audit-chain.js";
+import { validateFileBuffer, ALLOWED_MIME_TYPES, MAX_FILE_BYTES } from "../src/storage/local.js";
 
 const config: AppConfig = {
   nodeEnv: "test",
@@ -111,7 +113,11 @@ class TestRepository implements AuthRepository, DocumentRepository {
   async create(userId: number, input: DocumentInput) {
     const id = this.nextDocumentId++;
     const now = new Date().toISOString();
-    const document: DocumentRecord = { id, ownerId: userId, ...input, createdAt: now, updatedAt: now };
+    const document: DocumentRecord = {
+      id, ownerId: userId, ...input,
+      originalName: null, mimeType: null, fileSize: null,
+      createdAt: now, updatedAt: now,
+    };
     this.documents.set(id, document);
     await this.appendAudit({
       actorUserId: userId, documentId: id, action: "document.create",
@@ -200,6 +206,28 @@ class TestRepository implements AuthRepository, DocumentRepository {
       }
     }
     return result;
+  }
+
+  // File storage in-memory map: documentId -> { objectKey, originalName, mimeType }
+  readonly fileStore = new Map<number, { objectKey: string; originalName: string; mimeType: string; fileSize: number; buffer: Buffer }>();
+
+  async updateFileMetadata(documentId: number, userId: number, role: DocumentRole, meta: FileMetadataInput): Promise<boolean> {
+    const document = this.documents.get(documentId);
+    if (!document || !this.canEdit(document, userId, role)) return false;
+    this.fileStore.set(documentId, { ...meta, buffer: Buffer.alloc(0) });
+    await this.appendAudit({
+      actorUserId: userId, documentId, action: "document.upload",
+      outcome: "allowed", details: { documentId, originalName: meta.originalName, mimeType: meta.mimeType, fileSize: meta.fileSize },
+    });
+    return true;
+  }
+
+  async getObjectKeyForDownload(documentId: number, userId: number, role: DocumentRole) {
+    const document = this.documents.get(documentId);
+    if (!document || !this.canRead(document, userId, role)) return null;
+    const file = this.fileStore.get(documentId);
+    if (!file) return null;
+    return { objectKey: file.objectKey, originalName: file.originalName, mimeType: file.mimeType };
   }
 }
 

@@ -117,3 +117,50 @@ only after actual commits exist.
   plus safe Workbench steps. Database/user creation and migration remain
   pending explicit target confirmation and valid local credentials.
 - **Commit:** None; no commit or push was performed.
+
+## 2026-10-24 — File upload/download authorization, audit trail, and security hardening
+
+- **Prompt/task:** Implement real file upload and authorized download with
+  tamper-resistant audit trail, magic-byte file signature validation, CSRF
+  protection, immediate revocation enforcement, and comprehensive authorization
+  tests for the Snovasys Fresher Hiring Challenge 2026.
+- **Use:** AI designed and implemented:
+  - Disk storage backend (`server/src/storage/local.ts`) with strict MIME
+    allowlisting (PDF, JPEG, PNG, GIF, WebP, plain text, Word, Excel) and
+    content inspection against magic byte signatures.
+  - Secure file endpoints: `POST /api/documents/:id/upload` (multipart/form-data
+    with CSRF validation, magic-byte inspection, orphan cleanup) and
+    `GET /api/documents/:id/download` (permission-gated streaming with safe
+    Content-Disposition).
+  - Database schema migration (`003_add_file_metadata.sql`) adding
+    `original_name`, `mime_type`, and `file_size` columns.
+  - Complete audit recording: successful uploads (`document.upload`) and downloads
+    (`document.download`), as well as denied attempts (`document.upload.denied`,
+    `document.download.denied`).
+  - Frontend integration in `client/src/main.tsx` and `client/src/api.ts` with
+    attach/replace file and download buttons.
+  - Production database TLS resilience: added `DATABASE_TLS_CA` and
+    `DATABASE_TLS_REJECT_UNAUTHORIZED` options in `config.ts`, `pool.ts`, and
+    `migrate.ts`.
+- **Actual problems discovered and fixes made:**
+  - Client-supplied `Content-Type` headers can easily be forged. Added server-side
+    magic-byte validation in `local.ts` (`validateFileBuffer`) that verifies the
+    first bytes of uploaded buffers match expected signatures (e.g. `%PDF-` for PDF,
+    `FF D8 FF` for JPEG, `89 50 4E 47` for PNG), rejecting spoofed uploads with 415.
+  - Path traversal risk on download/upload: neutralized by generating random UUIDs
+    for on-disk object keys (`newObjectKey()`), never storing files under
+    user-supplied names, and asserting `path.basename(key) === key`.
+  - Immediate revocation: permission checks are executed within transactional
+    database queries (`FOR UPDATE` locking on document mutations), guaranteeing
+    that any permission revocation immediately cuts off download access.
+  - Render cloud database TLS: managed MySQL providers require TLS with specific CA
+    trust bundles. Added support for CA certificate overrides and TLS verification
+    flags.
+- **Verification:**
+  - `npm run test` reports 29 passed, 1 skipped across `auth.test.ts`,
+    `upload-download.test.ts`, and `documents.test.ts`.
+  - `npm run typecheck` passed cleanly across both workspace packages.
+  - `npm run build` compiled both server and client to `dist/` with zero errors.
+  - Local database migration `003_add_file_metadata.sql` was applied successfully.
+- **Commit:** Pending user review.
+
