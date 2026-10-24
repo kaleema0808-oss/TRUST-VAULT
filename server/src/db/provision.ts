@@ -11,23 +11,44 @@ export type ProvisionResult = {
   skipped: string[];
 };
 
+function cleanPassword(val?: string): string | undefined {
+  if (!val) return undefined;
+  let p = val.trim();
+  if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'"))) {
+    p = p.slice(1, -1);
+  }
+  return p.trim();
+}
+
 export async function provisionDefaultAccounts(
   db: Pool | Connection,
 ): Promise<ProvisionResult> {
-  const adminPassword =
+  const adminPassword = cleanPassword(
     process.env.ADMIN_PASSWORD ||
     process.env.DEV_ADMIN_PASSWORD ||
-    process.env.INITIAL_ADMIN_PASSWORD;
+    process.env.INITIAL_ADMIN_PASSWORD ||
+    process.env.TRUSTVAULT_ADMIN_PASSWORD ||
+    process.env.ADMIN_PASS ||
+    process.env.DEFAULT_ADMIN_PASSWORD,
+  );
 
-  const ownerPassword =
+  const ownerPassword = cleanPassword(
     process.env.OWNER_PASSWORD ||
     process.env.DEV_OWNER_PASSWORD ||
-    process.env.INITIAL_OWNER_PASSWORD;
+    process.env.INITIAL_OWNER_PASSWORD ||
+    process.env.TRUSTVAULT_OWNER_PASSWORD ||
+    process.env.OWNER_PASS ||
+    process.env.DEFAULT_OWNER_PASSWORD,
+  );
 
-  const viewerPassword =
+  const viewerPassword = cleanPassword(
     process.env.VIEWER_PASSWORD ||
     process.env.DEV_VIEWER_PASSWORD ||
-    process.env.INITIAL_VIEWER_PASSWORD;
+    process.env.INITIAL_VIEWER_PASSWORD ||
+    process.env.TRUSTVAULT_VIEWER_PASSWORD ||
+    process.env.VIEWER_PASS ||
+    process.env.DEFAULT_VIEWER_PASSWORD,
+  );
 
   const accounts = [
     { email: "admin@trustvault.local", role: "admin", password: adminPassword },

@@ -320,18 +320,18 @@ container lifetime; production scaling recommends an S3/B2 bucket adapter using 
 same repository interface. Automated route and authorization tests verify all
 upload, download, permission, and audit flows.
 
-## Security and deployment caveats
+## Security and deployment status
 
-Production startup requires a nonempty database password, `DATABASE_TLS=true`,
-and an HTTPS `APP_ORIGIN`. Use real provider TLS certificates and validate the
-selected provider's networking/allow-list settings when deploying. No
-credentials are in the frontend. No provider account, database, bucket or
-application has been deployed by this milestone.
+The application is deployed to production:
+- **Frontend**: [https://trust-vault-chi-cyan.vercel.app/](https://trust-vault-chi-cyan.vercel.app/) (Vercel)
+- **Backend API**: [https://trustvault-api-kuht.onrender.com/](https://trustvault-api-kuht.onrender.com/) (Render)
+- **Database**: Aiven MySQL 8.0 with mandatory TLS (`DATABASE_TLS=true`)
 
-The architecture recommendation and provider checks are recorded above in
-milestone history; hosting costs and availability must be rechecked before
-provisioning. See [`THREATS.md`](./THREATS.md) for planned controls, tests and
-residual risks and [`PROMPTS.md`](./PROMPTS.md) for the actual AI-use log.
+Production startup enforces strict security checks: nonempty database credentials, TLS verification, and HTTPS `APP_ORIGIN`. Cross-origin cookie sessions use `SameSite=None; Secure; HttpOnly`.
+On ephemeral hosting such as Render's free tier, local disk files persist during the container lifetime; multi-instance production scaling recommends an S3-compatible bucket adapter.
+
+For a structured walkthrough of role permissions, file validation, sharing, immediate revocation, and audit logs, see **Section 6: Five-Minute Evaluation & Demo Plan** in [`WRITEUP.md`](./WRITEUP.md).
+See [`THREATS.md`](./THREATS.md) for the 20-threat mitigation matrix and [`PROMPTS.md`](./PROMPTS.md) for the dated AI-use log.
 
 ## Interview summary
 

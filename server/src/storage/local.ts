@@ -19,6 +19,8 @@ import { randomUUID } from "node:crypto";
 import type { Response } from "express";
 import type { Readable } from "node:stream";
 
+import { fileURLToPath } from "node:url";
+
 // ── Allowed file types ────────────────────────────────────────────────────────
 // Map: MIME type → list of magic-byte signatures (first N bytes as hex string)
 const ALLOWED: Record<string, string[]> = {
@@ -39,7 +41,7 @@ export const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MiB
 // ── Storage directory ─────────────────────────────────────────────────────────
 function storageDir(): string {
   return process.env.STORAGE_DIR ??
-    path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "../../../storage");
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../storage");
 }
 
 async function ensureDir(): Promise<string> {

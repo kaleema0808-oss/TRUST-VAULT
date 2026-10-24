@@ -30,6 +30,9 @@ try {
   if (provisionResult.updated.length > 0) {
     console.info(`Updated account(s): ${provisionResult.updated.join(", ")}`);
   }
+  if (provisionResult.skipped.length > 0) {
+    console.info(`Provisioning status: ${provisionResult.skipped.join(", ")}`);
+  }
 } catch (error) {
   console.error("Account provisioning check failed on startup:", sanitizeErrorForLogging(error));
   await pool.end().catch(() => {});

@@ -192,6 +192,28 @@ only after actual commits exist.
   - `npm test` reports 34 passed, 1 skipped across 5 test suites.
   - `npm run typecheck` passed cleanly across both workspace packages.
   - `npm run build` compiled both server and client with zero errors and copied migrations.
-  - Live production endpoints tested via HTTP smoke test.
-- **Commit:** Pending user review.
+- **Commit:** `309ce52b5756306cbdf2960682245b73fe83307b`.
 
+## 2026-10-25 — Full project audit, security hardening, and production readiness
+
+- **Prompt/task:** Perform comprehensive audit of entire application (auth, authorization,
+  file storage, audit trail, migrations, documentation, live deployment), fix identified issues,
+  safeguard existing user accounts against automatic password overwrite, ensure safe startup
+  failures, document ephemeral storage trade-offs, and produce final submission report.
+- **Use:** AI performed systematic review:
+  - Validated live production database status: confirmed migrations 001/002/003 are applied,
+    and live registration/login works with `SameSite=None; Secure; HttpOnly` cookies.
+  - Hardened `provision.ts`: added whitespace and enclosing-quote sanitization (`cleanPassword`),
+    prevented automatic overwriting of existing accounts on startup, and restricted password
+    rotation to explicit `ROTATE_USER_PASSWORDS=true` opt-in.
+  - Hardened `server.ts`: ensured process fails fast and safely with sanitized error logs if
+    migrations or provisioning fail during startup, preventing partial or corrupt server boots.
+  - Hardened `local.ts`: fixed Windows path resolution with spaces using `fileURLToPath` and
+    `path.resolve`, maintaining UUID-based object key isolation and magic-byte validation.
+  - Added structured Five-Minute Evaluation & Demo Plan in `WRITEUP.md` Section 6 and updated
+    live URLs and deployment caveats in `README.md`.
+- **Verification:**
+  - `npm run typecheck`: 0 errors.
+  - `npm run build`: cleanly compiles client and server, copying migrations.
+  - `npm test`: 34 passed, 1 skipped.
+- **Commit:** Pending user review.

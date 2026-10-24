@@ -86,3 +86,36 @@ If granted additional production rollout time, the following enhancements would 
 2. **Distributed Rate Limiting**: Migrate the memory-based Express rate limiter to Redis to protect against distributed brute-force attacks across autoscaling instances.
 3. **ClamAV Antivirus Scanning**: Integrate asynchronous antivirus stream scanning for uploaded documents before committing them to persistent storage.
 4. **Audit Log Export & SIEM Webhooks**: Provide scheduled CSV/JSON exports and real-time webhook streaming for enterprise SIEM integration.
+
+---
+
+## 6. Five-Minute Evaluation & Demo Plan
+
+For evaluators reviewing TrustVault, follow this 5-minute walkthrough to test all core security properties:
+
+1. **Minute 1: Authentication & Role Check**
+   - Visit the live frontend at [https://trust-vault-chi-cyan.vercel.app/](https://trust-vault-chi-cyan.vercel.app/).
+   - Log in as Admin (`admin@trustvault.local`), Owner (`owner@trustvault.local`), or Viewer (`viewer@trustvault.local`).
+   - Observe role-based UI adaptations: Admins have the **Audit Logs** tab; Owners have **+ New Document** and sharing controls; Viewers see a read-only document viewer.
+
+2. **Minute 2: Document Creation & Magic-Byte Upload Verification**
+   - As Owner or Admin, click **+ New Document**, enter a title and category, and click **Save**.
+   - Click **Attach File** and select a valid document (PDF, PNG, JPEG, or TXT ≤ 10 MiB). Verify upload success.
+   - Attempt uploading an invalid payload (e.g. an executable or spoofed MIME type). Verify the server inspects binary magic bytes and returns `415 Unsupported Media Type`.
+
+3. **Minute 3: Fine-Grained Sharing & Access Isolation**
+   - On the created document, click **Share Permissions**.
+   - Select a Viewer account, check **Can Read** (leave **Can Edit** unchecked), and click **Grant Permission**.
+   - Log in as the Viewer (e.g. in a private/incognito browser window).
+   - Verify the Viewer can list the shared document and download the file.
+   - Verify the Viewer cannot edit, delete, or upload replacement bytes (denied on API and audited).
+
+4. **Minute 4: Immediate Revocation Enforcement**
+   - In the Owner session, click **Revoke** on the Viewer's permission grant.
+   - In the Viewer session, attempt downloading the document again or refreshing.
+   - Verify immediate enforcement: download is synchronously blocked (HTTP 404/403) and logged as a denied audit event (`document.download.denied`).
+
+5. **Minute 5: Cryptographic Audit Trail Review**
+   - Log in as `admin@trustvault.local` and select **Audit Logs**.
+   - Review the filterable audit log displaying all allowed actions (`document.upload`, `document.download`, `permission.grant`, `permission.revoke`) and denied attempts (`document.download.denied`).
+   - Observe tamper-evident SHA-256 event hash chaining and comprehensive metadata.
