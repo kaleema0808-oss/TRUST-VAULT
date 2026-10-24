@@ -22,15 +22,38 @@ export function createApp(
   app.use(helmet());
   app.use(cookieParser());
   app.use((request, response, next) => {
-    if (request.get("Origin") && request.get("Origin") !== config.appOrigin) {
+    const origin = request.get("Origin");
+
+    if (origin && origin !== config.appOrigin) {
       response.status(403).json({ error: "Origin not allowed" });
       return;
     }
+
+    if (origin === config.appOrigin) {
+      response.setHeader("Access-Control-Allow-Origin", config.appOrigin);
+      response.setHeader("Access-Control-Allow-Credentials", "true");
+      response.setHeader("Vary", "Origin");
+    }
+
+    if (request.method === "OPTIONS") {
+      if (origin !== config.appOrigin) {
+        response.status(403).json({ error: "Origin not allowed" });
+        return;
+      }
+
+      response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+      response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      response.setHeader("Access-Control-Max-Age", "600");
+      response.status(204).end();
+      return;
+    }
+
     if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method) &&
-        request.get("Origin") !== config.appOrigin) {
+        origin !== config.appOrigin) {
       response.status(403).json({ error: "Origin not allowed" });
       return;
     }
+
     next();
   });
   app.use(express.json({ limit: "16kb", type: "application/json" }));
