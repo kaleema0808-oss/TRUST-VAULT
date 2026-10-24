@@ -12,6 +12,7 @@
     "test": "npm run test -w @trustvault/server",
     "typecheck": "npm run typecheck -w @trustvault/server && npm run typecheck -w @trustvault/client",
     "db:migrate": "npm run db:migrate -w @trustvault/server",
+    "db:provision": "npm run db:provision -w @trustvault/server",
     "seed:dev": "npm run seed:dev -w @trustvault/server"
   },
   "devDependencies": {

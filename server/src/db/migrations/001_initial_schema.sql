@@ -1,4 +1,4 @@
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   email VARCHAR(254) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
@@ -8,7 +8,7 @@ CREATE TABLE users (
   UNIQUE KEY uq_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
   token_hash CHAR(64) NOT NULL,
   user_id BIGINT UNSIGNED NOT NULL,
   csrf_token_hash CHAR(64) NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE sessions (
   CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE documents (
+CREATE TABLE IF NOT EXISTS documents (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   owner_id BIGINT UNSIGNED NOT NULL,
   name VARCHAR(255) NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE documents (
   CONSTRAINT fk_documents_owner FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE document_permissions (
+CREATE TABLE IF NOT EXISTS document_permissions (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   document_id BIGINT UNSIGNED NOT NULL,
   user_id BIGINT UNSIGNED NOT NULL,
@@ -52,7 +52,7 @@ CREATE TABLE document_permissions (
   CONSTRAINT fk_permissions_granted_by FOREIGN KEY (granted_by) REFERENCES users (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE audit_events (
+CREATE TABLE IF NOT EXISTS audit_events (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   actor_user_id BIGINT UNSIGNED NOT NULL,
   document_id BIGINT UNSIGNED NULL,

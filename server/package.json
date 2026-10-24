@@ -5,11 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"import('node:fs').then(fs => fs.cpSync('src/db/migrations', 'dist/db/migrations', { recursive: true }))\"",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "db:migrate": "tsx src/db/migrate.ts",
+    "db:migrate:prod": "node dist/db/migrate.js",
+    "db:provision": "tsx src/db/provision.ts",
+    "db:provision:prod": "node dist/db/provision.js",
     "seed:dev": "tsx src/db/seed-dev.ts"
   },
   "dependencies": {

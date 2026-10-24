@@ -162,5 +162,36 @@ only after actual commits exist.
   - `npm run typecheck` passed cleanly across both workspace packages.
   - `npm run build` compiled both server and client to `dist/` with zero errors.
   - Local database migration `003_add_file_metadata.sql` was applied successfully.
+- **Commit:** `c541e26e2158e7dc5aa5ca4eae16e01665791445`.
+
+## 2026-10-24 — Production login HTTP 500 debugging, startup migrations, and account provisioning
+
+- **Prompt/task:** Debug and fix the production login HTTP 500 error on Render
+  connected to Aiven MySQL. Preserve existing code, verify database migration status,
+  sanitize error logging without credential leakage, support production account
+  provisioning, ensure cross-site session cookie compatibility, and update tests.
+- **Use:** AI investigated production endpoints, Git history, and server code:
+  - Discovered that `GET /health/ready` succeeded via `SELECT 1`, but any login
+    attempt (including non-existent users) returned HTTP 500 because migrations
+    were never executed against the production Aiven MySQL database, leaving the
+    `users` table absent.
+  - Discovered that TypeScript (`tsc`) did not copy `src/db/migrations` into `dist/`,
+    causing `node dist/db/migrate.js` to fail with `ENOENT`. Updated build script
+    to copy migrations and enhanced migration runner with multi-path resolution.
+  - Made schema migrations idempotent (`CREATE TABLE IF NOT EXISTS`) and integrated
+    safe auto-migration into server startup before listener initialization.
+  - Implemented `server/src/db/provision.ts` to provision `admin`, `owner`, and
+    `viewer` accounts via environment variables (`ADMIN_PASSWORD` / `DEV_ADMIN_PASSWORD`),
+    ensuring scrypt password hashing and role preservation without hardcoded secrets.
+  - Sanitized server-side error logging in `app.ts` to redact connection strings,
+    tokens, and credentials while logging structured error names, codes, and stacks.
+  - Added `X-CSRF-Token` to CORS `Access-Control-Allow-Headers` in `app.ts`.
+  - Configured session cookies to `SameSite=None; Secure` in production for cross-site
+    requests between Vercel (`vercel.app`) and Render (`onrender.com`).
+- **Verification:**
+  - `npm test` reports 34 passed, 1 skipped across 5 test suites.
+  - `npm run typecheck` passed cleanly across both workspace packages.
+  - `npm run build` compiled both server and client with zero errors and copied migrations.
+  - Live production endpoints tested via HTTP smoke test.
 - **Commit:** Pending user review.
 

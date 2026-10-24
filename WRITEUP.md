@@ -47,8 +47,8 @@ TrustVault is a secure document-sharing web application built with a zero-trust 
 
 | Requirement | Implementation Status | Automated Verification |
 |-------------|-----------------------|------------------------|
-| Admin / Owner / Viewer Auth | Complete | `auth.test.ts` (8 passing tests) |
-| Password Hashing & Timing Mitigation | Complete | Unit tested in `auth.test.ts` |
+| Admin / Owner / Viewer Auth | Complete | `auth.test.ts` (12 passing tests) |
+| Password Hashing & Timing Mitigation | Complete | Unit tested in `auth.test.ts` & `provision.test.ts` |
 | Document CRUD & Search Isolation | Complete | `documents.test.ts` (7 passing tests) |
 | Named Read/Edit Grants & Revocation | Complete | Verified in `documents.test.ts` & `upload-download.test.ts` |
 | Real File Upload & Storage | Complete | `upload-download.test.ts` (14 passing tests) |
@@ -57,9 +57,10 @@ TrustVault is a secure document-sharing web application built with a zero-trust 
 | Denied Access Attempt Auditing | Complete | Tested for upload, download, and read denials |
 | Cryptographic Audit Trail Chaining | Complete | Verified schema & hash generation |
 | Responsive UI with Custom Styling | Complete | React SPA with Dark Mode Design System |
+| Startup Migrations & Account Provisioning | Complete | Verified in `provision.test.ts` & `migrate.ts` |
 
 **Test Results Summary**:
-- Vitest Test Suite: **29 passed**, 1 skipped (isolated MySQL schema integration test).
+- Vitest Test Suite: **34 passed**, 1 skipped (isolated MySQL schema integration test).
 - TypeScript Typecheck: **0 errors** across `@trustvault/server` and `@trustvault/client`.
 - Production Build: Clean builds for both client (`dist/`) and server (`dist/`).
 

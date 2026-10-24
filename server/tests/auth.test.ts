@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import express from "express";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { AppConfig } from "../src/config.js";
 import { requireAuthentication, requireRole } from "../src/auth/middleware.js";
@@ -167,5 +167,95 @@ describe("authentication foundation", () => {
     expect(response.status).toBe(503);
     expect(response.body).toEqual({ status: "unavailable" });
     expect(JSON.stringify(response.body)).not.toContain("database secret");
+  });
+
+  it("logs unhandled request errors with sanitized details while returning generic 500", async () => {
+    const repository = new MemoryAuthRepository();
+    const dbError = Object.assign(new Error("Table 'trustvault.users' doesn't exist"), {
+      code: "ER_NO_SUCH_TABLE",
+      sqlState: "42S02",
+    });
+    repository.findUserByEmail = async () => {
+      throw dbError;
+    };
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const app = createApp(repository, config, async () => {});
+
+    const response = await request(app)
+      .post("/api/auth/login")
+      .set("Origin", config.appOrigin)
+      .send({ email: "admin@trustvault.local", password: "some-password-123" });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ error: "Internal server error" });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "Request failed:",
+      expect.objectContaining({
+        message: "Table 'trustvault.users' doesn't exist",
+        code: "ER_NO_SUCH_TABLE",
+      }),
+    );
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("redacts sensitive connection strings and passwords from logged errors", async () => {
+    const repository = new MemoryAuthRepository();
+    const sensitiveError = new Error("Connection failed to mysql://avnadmin:supersecretpassword@mysql-host.aivencloud.com:12345/defaultdb with token: my-secret-token");
+    repository.findUserByEmail = async () => {
+      throw sensitiveError;
+    };
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const app = createApp(repository, config, async () => {});
+
+    const response = await request(app)
+      .post("/api/auth/login")
+      .set("Origin", config.appOrigin)
+      .send({ email: "admin@trustvault.local", password: "some-password-123" });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ error: "Internal server error" });
+    const loggedError = consoleErrorSpy.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(loggedError.message).not.toContain("supersecretpassword");
+    expect(loggedError.message).not.toContain("my-secret-token");
+    expect(loggedError.message).toContain("[REDACTED]");
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("allows X-CSRF-Token in CORS preflight headers", async () => {
+    const repository = new MemoryAuthRepository();
+    const app = createApp(repository, config, async () => {});
+
+    const response = await request(app)
+      .options("/api/documents")
+      .set("Origin", config.appOrigin)
+      .set("Access-Control-Request-Method", "POST")
+      .set("Access-Control-Request-Headers", "Content-Type, X-CSRF-Token");
+
+    expect(response.status).toBe(204);
+    expect(response.headers["access-control-allow-headers"]).toContain("X-CSRF-Token");
+  });
+
+  it("sets SameSite=None and Secure=true on session cookie when in production mode", async () => {
+    const repository = new MemoryAuthRepository();
+    const prodConfig: AppConfig = {
+      ...config,
+      nodeEnv: "production",
+      appOrigin: "https://trust-vault-chi-cyan.vercel.app",
+    };
+    const app = createApp(repository, prodConfig, async () => {});
+    const email = "owner@trustvault.local";
+    const password = "valid-password-123";
+    await repository.createUser(email, await hashPassword(password), "owner");
+
+    const response = await request(app)
+      .post("/api/auth/login")
+      .set("Origin", prodConfig.appOrigin)
+      .send({ email, password });
+
+    expect(response.status).toBe(200);
+    const setCookie = response.headers["set-cookie"]?.[0] ?? "";
+    expect(setCookie).toContain("SameSite=None");
+    expect(setCookie).toContain("Secure");
+    expect(setCookie).toContain("HttpOnly");
   });
 });

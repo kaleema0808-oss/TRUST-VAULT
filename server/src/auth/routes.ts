@@ -31,7 +31,7 @@ function setSessionCookie(response: Response, token: string, config: AppConfig, 
   response.cookie("tv_session", token, {
     httpOnly: true,
     secure: config.nodeEnv === "production",
-    sameSite: "lax",
+    sameSite: config.nodeEnv === "production" ? "none" : "lax",
     path: "/",
     maxAge,
   });
@@ -138,7 +138,7 @@ export function createAuthRouter(repository: AuthRepository, config: AppConfig):
       response.clearCookie("tv_session", {
         httpOnly: true,
         secure: config.nodeEnv === "production",
-        sameSite: "lax",
+        sameSite: config.nodeEnv === "production" ? "none" : "lax",
         path: "/",
       });
       response.status(204).end();

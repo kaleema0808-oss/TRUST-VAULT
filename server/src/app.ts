@@ -43,7 +43,7 @@ export function createApp(
       }
 
       response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-      response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token");
       response.setHeader("Access-Control-Max-Age", "600");
       response.status(204).end();
       return;
@@ -125,9 +125,32 @@ export function createApp(
         return;
       }
     }
-    console.error("Request failed");
+    console.error("Request failed:", sanitizeErrorForLogging(error));
     response.status(500).json({ error: "Internal server error" });
   };
   app.use(errorHandler);
   return app;
+}
+
+export function sanitizeErrorForLogging(error: unknown): Record<string, unknown> | string {
+  if (typeof error === "object" && error !== null) {
+    const err = error as Error & { code?: string; errno?: number; sqlState?: string; sqlMessage?: string };
+    const scrub = (str?: string) => {
+      if (!str) return str;
+      return str
+        .replace(/:\/\/([^:@]+):([^@]+)@/g, "://$1:[REDACTED]@")
+        .replace(/(password|token|secret|key|authorization|bearer)\s*[:=]\s*['"]?[^\s,'"]+/gi, "$1=[REDACTED]");
+    };
+
+    return {
+      name: err.name ?? "Error",
+      message: scrub(err.message),
+      code: err.code,
+      errno: err.errno,
+      sqlState: err.sqlState,
+      sqlMessage: scrub(err.sqlMessage),
+      stack: scrub(err.stack),
+    };
+  }
+  return typeof error === "string" ? error.replace(/:\/\/([^:@]+):([^@]+)@/g, "://$1:[REDACTED]@") : String(error);
 }
