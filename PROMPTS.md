@@ -145,5 +145,5 @@ only after actual commits exist.
   isolated test database/credentials are configured; no connection check or
   migration was run.
 - **Commit:** The dependency correction and this entry are committed on
-  `trustvault-local-work`; the commit identifier is recorded in the subsequent
-  history after the commit exists.
+  `trustvault-local-work` in commit
+  `514cff002ddc38baefb28c0889a7a7cc4e484055`.
