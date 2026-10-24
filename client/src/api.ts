@@ -2,7 +2,7 @@
 // Credentials (session cookie) are included automatically.
 // The CSRF token is stored in module state and sent on mutating requests.
 
-const BASE = "";
+const BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 let csrfToken = "";
 
 export function setCsrfToken(token: string) { csrfToken = token; }
