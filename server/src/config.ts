@@ -4,6 +4,7 @@ import { z } from "zod";
 const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   API_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+  PORT: z.coerce.number().int().min(1).max(65535).optional(),
   APP_ORIGIN: z.string().url().default("http://localhost:5173"),
   DATABASE_HOST: z.string().default("127.0.0.1"),
   DATABASE_PORT: z.coerce.number().int().min(1).max(65535).default(3306),
@@ -43,7 +44,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     nodeEnv: parsed.data.NODE_ENV,
-    apiPort: parsed.data.API_PORT,
+    apiPort: parsed.data.PORT ?? parsed.data.API_PORT,
     appOrigin: parsed.data.APP_ORIGIN,
     sessionTtlHours: parsed.data.SESSION_TTL_HOURS,
   };
