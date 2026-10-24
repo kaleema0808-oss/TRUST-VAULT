@@ -1,4 +1,4 @@
-# TrustVault — Milestone 1: Working Local Foundation
+# TrustVault — Secure Document-Sharing Foundation
 
 TrustVault is a private document-sharing application for the Snovasys Fresher
 Hiring Challenge 2026. It is being built in milestones, prioritizing access
@@ -8,28 +8,27 @@ control and explainable security decisions over feature count.
 
 - [x] Workspace inspection and architecture recommendation
 - [x] React/Vite and Express/TypeScript project setup
-- [x] MySQL connection-pool configuration and initial versioned schema migration file
+- [x] MySQL connection pool and local migrations 001/002 applied and verified
 - [x] Authentication foundation: password hashes, database-backed sessions,
   logout, expiry, CSRF token and role middleware
-- [x] API health checks and isolated-auth tests
-- [ ] Configure and run isolated MySQL integration tests
+- [x] API health checks and authentication tests
+- [ ] Configure and run isolated MySQL constraint integration test
 - [x] Add metadata endpoints with server-side owner/grant authorization and route tests
-- [x] Add transaction-bound permission audit records and hash-chain verification helper
-- [ ] Verify MySQL repository queries and transaction rollback against an isolated MySQL database
+- [x] Add transaction-bound permission audit records and hash-chain verification
+- [x] Verify local MySQL login, access isolation, viewer edit denial, revocation, and audit chain
+- [ ] Verify transaction rollback with injected database failures
 - [ ] Add private file storage and authorized download/preview routes
-- [ ] Private object storage, permission management and audit hash chain
 - [ ] Deployment and live security verification
 
 Document metadata and permission routes now exist with server-side access
 checks, immediate permission re-evaluation, denied-attempt auditing, and a
-hash-chain verification helper. Route tests use an in-memory repository, so
-they do not prove MySQL execution or persistence. The Windows MySQL service is
-running, but no root `.env` exists and `SELECT 1` failed with
-`ER_ACCESS_DENIED_ERROR`; no migration has been applied. Route security tests
-and local compilation pass, but the MySQL-specific integration test remains
-skipped until a dedicated test schema and valid credentials are configured.
-File storage, download/preview routes, live database verification, and
-deployment remain unfinished.
+hash-chained audit log. In addition to in-memory route tests, the local
+MySQL-backed API was exercised for login, cross-user isolation, viewer
+read-only access, immediate revocation, audit persistence, and hash-chain
+verification. The isolated MySQL constraint test remains skipped because no
+separate `trustvault_test_*` schema is configured. Private file storage,
+upload/download/preview routes, deployment, and live security verification
+remain unfinished.
 
 ## Architecture
 
@@ -81,10 +80,12 @@ creates these InnoDB tables:
   check constraint prevents edit permission without read permission. MySQL
   enforces these constraints even if an application bug attempts an invalid
   insert.
-- **`audit_events`**: the future application audit stream. It references its
-  actor and optionally a document, and indexes actor/document/time for later
-  dashboard queries. The hash columns are reserved for a later implementation;
-  the chain is not implemented in this milestone.
+- **`audit_events`**: an append-only application audit stream with SHA-256
+  previous/event hashes. It references its actor and stores an optional
+  document ID without a document foreign key. Keeping historical IDs avoids
+  `ON DELETE SET NULL` silently changing old hashed events when metadata is
+  deleted. A database administrator can still rewrite and recompute the
+  unanchored chain.
 
 A **primary key** gives each row its stable identity. A **foreign key** makes
 relationships real database rules, not just assumptions in code. A **unique
@@ -92,9 +93,9 @@ constraint** prevents duplicate identities/grants. An **index** is an
 additional lookup structure that speeds selected queries at the cost of extra
 storage and slower writes. A **join** lets the application query a permission
 row together with its user/document. A **transaction** groups related
-permission and audit writes so they succeed or roll back together. Although
-these repository queries are implemented, the MySQL migration and transactions
-have not been run against a configured database yet.
+permission and audit writes so they succeed or roll back together. The local
+migrations and normal repository flows have run against MySQL; injected
+transaction-failure behavior is not yet verified.
 
 ## Prerequisites
 
@@ -107,9 +108,9 @@ and test database accounts in a real deployment.
 
 ### MySQL status on the inspected machine
 
-The Windows service `MySQL267` is running, but the `mysql` command-line client
-was not found on `PATH`. No root `.env` file exists. The app therefore used
-these defaults for the safe connection test:
+The Windows service `MySQL267` is running. A dedicated local `trustvault`
+database and `trustvault_app`@`127.0.0.1` account were created after approval.
+The app connects using:
 
 | Setting | Expected value |
 | --- | --- |
@@ -117,14 +118,15 @@ these defaults for the safe connection test:
 | Port | `3306` |
 | Database | `trustvault` |
 | Username | `trustvault_app` |
-| Password | `DATABASE_PASSWORD` (unset; application default is empty) |
+| Password | Local-only `DATABASE_PASSWORD` in ignored `.env` (value not documented) |
 | TLS | `DATABASE_TLS=false` for local development |
 
-The `.env.example` value `replace-with-a-local-password` is only a placeholder;
-it is not a valid password or an existing credential. `SELECT 1` failed with
-`ER_ACCESS_DENIED_ERROR`, so MySQL is running but TrustVault has **not**
-authenticated or connected to its database. No schema or migration has been
-applied. Do not treat the MySQL integration test as passing while it is skipped.
+Migrations `001_initial_schema.sql` and
+`002_preserve_audit_document_ids.sql` have been applied to this local database.
+`GET /health/ready` returned 200 and local `SELECT 1` succeeded. Development
+admin, owner, and viewer accounts are seeded with passwords kept in ignored
+`.env`; no credentials are included here. The separate MySQL constraint test
+is still skipped and is not claimed as verified.
 
 ### Safe local database setup
 
@@ -175,13 +177,11 @@ do not print it, commit it, or send it in chat. Confirm
 The migration command is `npm run db:migrate` (root script delegates to
 `npm run db:migrate -w @trustvault/server`, which runs `tsx src/db/migrate.ts`).
 It creates `schema_migrations` and applies numbered SQL files not already
-recorded. The currently inspected
-[`001_initial_schema.sql`](./server/src/db/migrations/001_initial_schema.sql)
-contains only `CREATE TABLE` statements for `users`, `sessions`, `documents`,
-`document_permissions`, and `audit_events`, with keys and constraints; it
-contains no `DROP`, `DELETE`, or `ALTER` of existing application data. I have
-not run it because the configured account could not authenticate and no
-dedicated target is currently confirmed.
+recorded. Migration 001 creates `users`, `sessions`, `documents`,
+`document_permissions`, and `audit_events`. Migration 002 removes the document
+foreign key from historical audit rows so deleting metadata cannot silently
+change hashed events. Both migrations were applied only to the confirmed local
+`trustvault` database; no production database was used.
 
 After the dedicated account is configured, run `npm run db:migrate`, then
 check `http://localhost:3001/health/ready`; a `200` with
@@ -311,10 +311,11 @@ partial event alteration, but a privileged actor who can rewrite the entire
 database can recompute an unanchored chain.
 
 The source folders are `client/` (React/Vite frontend) and `server/` (Express
-API). These metadata routes return no storage object key or file URL. No
-upload, download, or preview endpoint exists because private file storage is
-not yet configured. Route tests currently use an in-memory repository;
-production MySQL behavior remains unverified.
+API). The login screen is connected. Metadata routes return no storage object
+key or file URL. No upload, download, or preview endpoint exists because
+private file storage is not yet configured. Automated route tests use an
+in-memory repository; separate local MySQL-backed HTTP checks verified core
+authorization and audit flows.
 
 ## Security and deployment caveats
 
@@ -335,6 +336,6 @@ The database models users as the parent records for sessions, ownership and
 grants. A foreign key prevents orphaned relationships; unique keys prevent
 duplicate emails or grants; indexes make permission lookups efficient.
 Authentication uses random opaque server-side sessions, scrypt password
-hashes, expiry and CSRF defenses. The upcoming document handlers must still
-authorize every request against current owner/grant records before any
-metadata or file bytes are returned.
+hashes, expiry and CSRF defenses. Document metadata handlers check current
+grants on each request. Private file handling remains future work and must
+perform fresh authorization before serving any bytes.

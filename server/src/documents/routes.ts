@@ -162,6 +162,22 @@ export function createDocumentRouter(
     }
   });
 
+  // List permissions for a document (owner or admin can view)
+  router.get("/:documentId/permissions", async (request, response, next) => {
+    const parsedId = documentIdSchema.safeParse(request.params.documentId);
+    if (!parsedId.success) {
+      reject(response);
+      return;
+    }
+    try {
+      const actor = getActor(request);
+      const permissions = await documentRepository.listPermissions(parsedId.data, actor.id, actor.role);
+      response.json({ permissions });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.put("/:documentId/permissions/:userId", requireCsrf, async (request, response, next) => {
     const parsedDocumentId = documentIdSchema.safeParse(request.params.documentId);
     const parsedUserId = documentIdSchema.safeParse(request.params.userId);

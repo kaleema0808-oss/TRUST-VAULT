@@ -7,6 +7,7 @@ import { createAuthRouter } from "./auth/routes.js";
 import { requireAuthentication, requireRole } from "./auth/middleware.js";
 import type { AuthRepository, DocumentRepository } from "./auth/repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
+import { z } from "zod";
 
 export type HealthCheck = () => Promise<void>;
 
@@ -54,6 +55,35 @@ export function createApp(
 
   if (documentRepository) {
     app.use("/api/documents", createDocumentRouter(repository, documentRepository));
+
+    // Admin-only audit events endpoint
+    const auditFilterSchema = z.object({
+      actorUserId: z.coerce.number().int().positive().optional(),
+      action: z.string().max(64).optional(),
+      outcome: z.enum(["allowed", "denied"]).optional(),
+      documentId: z.coerce.number().int().positive().optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
+      offset: z.coerce.number().int().min(0).default(0),
+    });
+
+    app.get(
+      "/api/admin/audit",
+      requireAuthentication(repository),
+      requireRole("admin"),
+      async (request, response, next) => {
+        const parsed = auditFilterSchema.safeParse(request.query);
+        if (!parsed.success) {
+          response.status(400).json({ error: "Invalid filter parameters" });
+          return;
+        }
+        try {
+          const events = await documentRepository.listAuditEvents(parsed.data);
+          response.json({ events });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
   }
 
   app.get("/api/admin/check", requireAuthentication(repository), requireRole("admin"), (_request, response) => {

@@ -38,6 +38,15 @@ class MemoryAuthRepository implements AuthRepository {
   async deleteSession(tokenHash: string) {
     this.sessions.delete(tokenHash);
   }
+  async createUser(email: string, passwordHash: string, role: import("../src/auth/repository.js").UserRole) {
+    const id = this.users.length + 100;
+    const user = { id, email, role, passwordHash };
+    this.users.push(user);
+    return user;
+  }
+  async listUsers() {
+    return this.users.map((u) => ({ id: u.id, email: u.email, role: u.role }));
+  }
 }
 
 const repositories: MemoryAuthRepository[] = [];

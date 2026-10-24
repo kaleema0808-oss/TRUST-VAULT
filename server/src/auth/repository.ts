@@ -39,6 +39,8 @@ export interface AuthRepository {
   createSession(session: AuthSession): Promise<void>;
   updateCsrfToken(tokenHash: string, csrfTokenHash: string): Promise<void>;
   deleteSession(tokenHash: string): Promise<void>;
+  createUser(email: string, passwordHash: string, role: UserRole): Promise<AuthUser>;
+  listUsers(): Promise<AuthUser[]>;
 }
 
 export interface DocumentRepository {
@@ -50,7 +52,37 @@ export interface DocumentRepository {
   grant(documentId: number, userId: number, role: DocumentRole, targetUserId: number, permission: DocumentPermission): Promise<boolean>;
   revoke(documentId: number, userId: number, role: DocumentRole, targetUserId: number): Promise<boolean>;
   appendAudit(event: AuditInput): Promise<void>;
+  listAuditEvents(filters: AuditFilter): Promise<AuditEvent[]>;
+  listPermissions(documentId: number, userId: number, role: DocumentRole): Promise<PermissionRecord[]>;
 }
+
+export type AuditFilter = {
+  actorUserId?: number;
+  action?: string;
+  outcome?: "allowed" | "denied";
+  documentId?: number;
+  limit?: number;
+  offset?: number;
+};
+
+export type AuditEvent = {
+  id: number;
+  actorUserId: number | null;
+  actorEmail?: string;
+  documentId: number | null;
+  action: string;
+  outcome: "allowed" | "denied";
+  details: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type PermissionRecord = {
+  userId: number;
+  email: string;
+  canRead: boolean;
+  canEdit: boolean;
+  grantedBy: number;
+};
 
 type UserRow = RowDataPacket & { id: number; email: string; role: UserRole; password_hash: string };
 type SessionRow = UserRow & {
@@ -105,6 +137,21 @@ export class MysqlAuthRepository implements AuthRepository {
 
   async deleteSession(tokenHash: string): Promise<void> {
     await this.pool.execute("DELETE FROM sessions WHERE token_hash = ?", [tokenHash]);
+  }
+
+  async createUser(email: string, passwordHash: string, role: UserRole): Promise<AuthUser> {
+    const [result] = await this.pool.execute<import("mysql2").ResultSetHeader>(
+      "INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)",
+      [email, passwordHash, role],
+    );
+    return { id: result.insertId, email, role };
+  }
+
+  async listUsers(): Promise<AuthUser[]> {
+    const [rows] = await this.pool.execute<UserRow[]>(
+      "SELECT id, email, role FROM users ORDER BY email ASC",
+    );
+    return rows.map((row) => ({ id: row.id, email: row.email, role: row.role }));
   }
 }
 
@@ -254,7 +301,7 @@ export class MysqlDocumentRepository implements DocumentRepository {
       }
       await this.appendAuditWithConnection(connection, {
         actorUserId: userId,
-        documentId: null,
+        documentId,
         action: "document.delete",
         outcome: "allowed",
         details: { documentId },
@@ -352,6 +399,79 @@ export class MysqlDocumentRepository implements DocumentRepository {
     }
   }
 
+  async listPermissions(documentId: number, userId: number, role: DocumentRole): Promise<PermissionRecord[]> {
+    // Verify the actor has read access to the document first
+    const doc = await this.getAccessible(documentId, userId, role);
+    if (!doc) return [];
+    const [rows] = await this.pool.execute<(RowDataPacket & {
+      user_id: number; email: string; can_read: number; can_edit: number; granted_by: number;
+    })[]>(
+      `SELECT p.user_id, u.email, p.can_read, p.can_edit, p.granted_by
+       FROM document_permissions p JOIN users u ON u.id = p.user_id
+       WHERE p.document_id = ?
+       ORDER BY u.email ASC`,
+      [documentId],
+    );
+    return rows.map((row) => ({
+      userId: row.user_id,
+      email: row.email,
+      canRead: Boolean(row.can_read),
+      canEdit: Boolean(row.can_edit),
+      grantedBy: row.granted_by,
+    }));
+  }
+
+  async listAuditEvents(filters: AuditFilter): Promise<AuditEvent[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (filters.actorUserId !== undefined) {
+      conditions.push("a.actor_user_id = ?");
+      params.push(filters.actorUserId);
+    }
+    if (filters.action) {
+      conditions.push("a.action = ?");
+      params.push(filters.action);
+    }
+    if (filters.outcome) {
+      conditions.push("a.outcome = ?");
+      params.push(filters.outcome);
+    }
+    if (filters.documentId !== undefined) {
+      conditions.push("a.document_id = ?");
+      params.push(filters.documentId);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const limit = Math.min(filters.limit ?? 50, 200);
+    const offset = filters.offset ?? 0;
+    params.push(limit, offset);
+
+    // mysql2 execute requires explicit cast when params is built dynamically
+    const [rows] = await this.pool.execute<(RowDataPacket & {
+      id: number; actor_user_id: number | null; actor_email: string | null;
+      document_id: number | null; action: string; outcome: "allowed" | "denied";
+      details: string; created_at: Date;
+    })[]>(
+      `SELECT a.id, a.actor_user_id, u.email AS actor_email, a.document_id,
+              a.action, a.outcome, a.details, a.created_at
+       FROM audit_events a
+       LEFT JOIN users u ON u.id = a.actor_user_id
+       ${where}
+       ORDER BY a.id DESC
+       LIMIT ? OFFSET ?`,
+      params as import("mysql2").ExecuteValues[],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      actorUserId: row.actor_user_id,
+      actorEmail: row.actor_email ?? undefined,
+      documentId: row.document_id,
+      action: row.action,
+      outcome: row.outcome,
+      details: typeof row.details === "string" ? JSON.parse(row.details) : row.details,
+      createdAt: row.created_at.toISOString(),
+    }));
+  }
+
   async appendAudit(event: AuditInput): Promise<void> {
     const connection = await this.pool.getConnection();
     try {
@@ -374,7 +494,8 @@ export class MysqlDocumentRepository implements DocumentRepository {
       "SELECT event_hash FROM audit_events ORDER BY id DESC LIMIT 1 FOR UPDATE",
     );
     const previousHash = (rows[0]?.event_hash as string | null | undefined) ?? null;
-    const createdAt = new Date().toISOString();
+    const createdAtDate = new Date();
+    const createdAt = createdAtDate.toISOString();
     const detailsJson = JSON.stringify(event.details);
     const eventHash = createAuditEventHash({
       actorUserId: event.actorUserId,
@@ -388,7 +509,7 @@ export class MysqlDocumentRepository implements DocumentRepository {
       `INSERT INTO audit_events
         (actor_user_id, document_id, action, outcome, details, previous_hash, event_hash, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [event.actorUserId, event.documentId, event.action, event.outcome, detailsJson, previousHash, eventHash, createdAt],
+      [event.actorUserId, event.documentId, event.action, event.outcome, detailsJson, previousHash, eventHash, createdAtDate],
     );
   }
 }

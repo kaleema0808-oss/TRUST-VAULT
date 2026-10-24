@@ -71,6 +71,17 @@ class TestRepository implements AuthRepository, DocumentRepository {
     this.sessions.delete(tokenHash);
   }
 
+  async createUser(email: string, passwordHash: string, role: import("../src/auth/repository.js").UserRole) {
+    const id = this.users.length + 100;
+    const user = { id, email, role, passwordHash };
+    this.users.push(user);
+    return user;
+  }
+
+  async listUsers() {
+    return this.users.map((u) => ({ id: u.id, email: u.email, role: u.role }));
+  }
+
   private key(documentId: number, userId: number) {
     return `${documentId}:${userId}`;
   }
@@ -163,6 +174,32 @@ class TestRepository implements AuthRepository, DocumentRepository {
 
   async appendAudit(event: AuditInput) {
     this.audit.push(event);
+  }
+
+  async listAuditEvents(_filters: import("../src/auth/repository.js").AuditFilter) {
+    return this.audit.map((e, i) => ({
+      id: i + 1,
+      actorUserId: e.actorUserId,
+      documentId: e.documentId,
+      action: e.action,
+      outcome: e.outcome,
+      details: e.details,
+      createdAt: new Date().toISOString(),
+    }));
+  }
+
+  async listPermissions(documentId: number, userId: number, role: DocumentRole) {
+    const document = this.documents.get(documentId);
+    if (!document || !this.canRead(document, userId, role)) return [];
+    const result: import("../src/auth/repository.js").PermissionRecord[] = [];
+    for (const [key, perm] of this.grants.entries()) {
+      const [docId, uId] = key.split(":").map(Number);
+      if (docId === documentId) {
+        const user = this.users.find((u) => u.id === uId);
+        if (user) result.push({ userId: uId, email: user.email, canRead: perm.canRead, canEdit: perm.canEdit, grantedBy: userId });
+      }
+    }
+    return result;
   }
 }
 

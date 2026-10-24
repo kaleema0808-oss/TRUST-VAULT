@@ -11,6 +11,11 @@ const loginSchema = z.object({
   password: z.string().min(1).max(128),
 }).strict();
 
+const registerSchema = z.object({
+  email: z.string().trim().email().max(254),
+  password: z.string().min(12).max(128),
+}).strict();
+
 function makeToken(): string {
   return randomBytes(32).toString("hex");
 }
@@ -36,6 +41,39 @@ export function createAuthRouter(repository: AuthRepository, config: AppConfig):
   const router = Router();
   const authenticate = requireAuthentication(repository);
   const sessionTtlMs = config.sessionTtlHours * 60 * 60 * 1000;
+
+  router.post("/register", async (request: Request, response: Response, next) => {
+    const parsed = registerSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: "Email must be valid and password must be at least 12 characters" });
+      return;
+    }
+    try {
+      const existing = await repository.findUserByEmail(parsed.data.email.toLowerCase());
+      if (existing) {
+        response.status(409).json({ error: "An account with that email already exists" });
+        return;
+      }
+      const passwordHash = await hashPassword(parsed.data.password);
+      const user = await repository.createUser(parsed.data.email.toLowerCase(), passwordHash, "viewer");
+      const token = makeToken();
+      const csrfToken = makeToken();
+      const expiresAt = new Date(Date.now() + sessionTtlMs);
+      await repository.createSession({
+        tokenHash: hashToken(token),
+        userId: user.id,
+        csrfTokenHash: hashToken(csrfToken),
+        expiresAt,
+      });
+      setSessionCookie(response, token, config, sessionTtlMs);
+      response.status(201).json({
+        user: { id: user.id, email: user.email, role: user.role },
+        csrfToken,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.post("/login", async (request: Request, response: Response, next) => {
     const parsed = loginSchema.safeParse(request.body);
@@ -73,6 +111,15 @@ export function createAuthRouter(repository: AuthRepository, config: AppConfig):
 
   router.get("/me", authenticate, (request, response) => {
     response.json({ user: request.auth?.user });
+  });
+
+  router.get("/users", authenticate, async (_request, response, next) => {
+    try {
+      const users = await repository.listUsers();
+      response.json({ users: users.map((u) => ({ id: u.id, email: u.email, role: u.role })) });
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get("/csrf", authenticate, async (request, response, next) => {
