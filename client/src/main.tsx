@@ -1,4 +1,4 @@
-
+﻿
 import { useCallback, useEffect, useState } from "react";
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -11,6 +11,7 @@ import {
   type AuditEvent,
   type Document,
   type User,
+  type Permission,
 } from "./api";
 import "./style.css";
 
@@ -28,6 +29,12 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [shareDocumentId, setShareDocumentId] = useState<number | null>(null);
+  const [availableUsers, setAvailableUsers] = useState<User[]>([]);
+  const [permissions, setPermissions] = useState<Record<number, Permission[]>>({});
+  const [shareUserId, setShareUserId] = useState("");
+  const [shareCanRead, setShareCanRead] = useState(true);
+  const [shareCanEdit, setShareCanEdit] = useState(false);
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -138,6 +145,71 @@ function App() {
     }
   }
 
+  async function openSharing(document: Document) {
+    setError("");
+    setNotice("");
+    try {
+      const [userResult, permissionResult] = await Promise.all([
+        auth.users(),
+        docs.listPermissions(document.id),
+      ]);
+      setAvailableUsers(userResult.users.filter((candidate) => candidate.id !== user?.id));
+      setPermissions((current) => ({
+        ...current,
+        [document.id]: permissionResult.permissions,
+      }));
+      setShareDocumentId(document.id);
+      setShareUserId("");
+      setShareCanRead(true);
+      setShareCanEdit(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load sharing settings.");
+    }
+  }
+
+  async function refreshPermissions(documentId: number) {
+    const result = await docs.listPermissions(documentId);
+    setPermissions((current) => ({
+      ...current,
+      [documentId]: result.permissions,
+    }));
+  }
+
+  async function saveSharing() {
+    if (shareDocumentId === null || !shareUserId) {
+      setError("Select a user first.");
+      return;
+    }
+    setError("");
+    setNotice("");
+    try {
+      await docs.grant(
+        shareDocumentId,
+        Number(shareUserId),
+        shareCanRead,
+        shareCanEdit
+      );
+      await refreshPermissions(shareDocumentId);
+      setNotice("Document access updated successfully.");
+      setShareUserId("");
+      setShareCanRead(true);
+      setShareCanEdit(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not grant document access.");
+    }
+  }
+
+  async function revokeSharing(documentId: number, targetUserId: number) {
+    setError("");
+    setNotice("");
+    try {
+      await docs.revoke(documentId, targetUserId);
+      await refreshPermissions(documentId);
+      setNotice("Document access revoked.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not revoke document access.");
+    }
+  }
   async function logout() {
     setError("");
     try {
@@ -177,7 +249,7 @@ function App() {
           className={`nav-item ${view === "documents" ? "active" : ""}`}
           onClick={() => setView("documents")}
         >
-          <span className="nav-icon">▤</span> Documents
+          <span className="nav-icon">â–¤</span> Documents
         </button>
         {user.role === "admin" && (
           <>
@@ -186,7 +258,7 @@ function App() {
               className={`nav-item ${view === "audit" ? "active" : ""}`}
               onClick={() => setView("audit")}
             >
-              <span className="nav-icon">◷</span> Audit log
+              <span className="nav-icon">â—·</span> Audit log
             </button>
           </>
         )}
@@ -297,7 +369,7 @@ function App() {
               <div className="card-body">
                 <div className="toolbar">
                   <div className="search-bar">
-                    <span className="search-icon">⌕</span>
+                    <span className="search-icon">âŒ•</span>
                     <input
                       type="text"
                       aria-label="Search documents"
@@ -315,7 +387,7 @@ function App() {
                   </div>
                 ) : visibleDocuments.length === 0 ? (
                   <div className="empty-state">
-                    <span className="empty-icon">▤</span>
+                    <span className="empty-icon">â–¤</span>
                     <h3>{search ? "No matching records" : "No documents yet"}</h3>
                     <p>
                       {search
@@ -327,7 +399,7 @@ function App() {
                   <div className="document-grid">
                     {visibleDocuments.map((document) => (
                       <article className="document-card" key={document.id}>
-                        <div className="document-card-icon">▤</div>
+                        <div className="document-card-icon">â–¤</div>
                         <h3 className="document-card-name">{document.name}</h3>
                         <span className="document-card-category">{document.category}</span>
                         <div className="document-card-meta">
@@ -352,6 +424,100 @@ function App() {
                             Delete
                           </button>
                         </div>
+                        {canCreate && (
+                          <div className="share-panel" style={{ marginTop: "16px", paddingTop: "12px", borderTop: "1px solid var(--border)" }}>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              type="button"
+                              onClick={() => {
+                                if (shareDocumentId === document.id) {
+                                  setShareDocumentId(null);
+                                } else {
+                                  void openSharing(document);
+                                }
+                              }}
+                            >
+                              {shareDocumentId === document.id ? "Close sharing" : "Share / Manage access"}
+                            </button>
+
+                            {shareDocumentId === document.id && (
+                              <div style={{ marginTop: "12px" }}>
+                                <div className="form-group">
+                                  <label htmlFor={`share-user-${document.id}`}>Grant access to user</label>
+                                  <select
+                                    id={`share-user-${document.id}`}
+                                    value={shareUserId}
+                                    onChange={(event) => setShareUserId(event.target.value)}
+                                  >
+                                    <option value="">Select a user...</option>
+                                    {availableUsers.map((candidate) => (
+                                      <option key={candidate.id} value={candidate.id}>
+                                        {candidate.email} ({candidate.role})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <label style={{ display: "block", margin: "8px 0" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={shareCanRead}
+                                    onChange={(event) => {
+                                      setShareCanRead(event.target.checked);
+                                      if (!event.target.checked) setShareCanEdit(false);
+                                    }}
+                                  />{" "}
+                                  Read access
+                                </label>
+                                <label style={{ display: "block", margin: "8px 0" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={shareCanEdit}
+                                    onChange={(event) => {
+                                      setShareCanEdit(event.target.checked);
+                                      if (event.target.checked) setShareCanRead(true);
+                                    }}
+                                  />{" "}
+                                  Edit access (includes read access)
+                                </label>
+
+                                <button
+                                  className="btn btn-primary btn-sm"
+                                  type="button"
+                                  disabled={!shareUserId || (!shareCanRead && !shareCanEdit)}
+                                  onClick={() => void saveSharing()}
+                                >
+                                  Grant access
+                                </button>
+
+                                <h4 style={{ marginTop: "16px" }}>Users with access</h4>
+                                {(permissions[document.id] ?? []).length === 0 ? (
+                                  <p className="page-subtitle">No explicit permissions are listed.</p>
+                                ) : (
+                                  (permissions[document.id] ?? []).map((permission) => (
+                                    <div
+                                      key={permission.userId}
+                                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginTop: "8px" }}
+                                    >
+                                      <span>
+                                        {permission.email}
+                                        {" — "}
+                                        {permission.canEdit ? "Read + edit" : permission.canRead ? "Read only" : "No access"}
+                                      </span>
+                                      <button
+                                        className="btn btn-danger btn-sm"
+                                        type="button"
+                                        onClick={() => void revokeSharing(document.id, permission.userId)}
+                                      >
+                                        Revoke
+                                      </button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </article>
                     ))}
                   </div>
@@ -376,7 +542,7 @@ function App() {
                 <div className="empty-state"><span className="spinner spinner-lg" /></div>
               ) : events.length === 0 ? (
                 <div className="empty-state">
-                  <span className="empty-icon">◷</span>
+                  <span className="empty-icon">â—·</span>
                   <h3>No activity recorded yet</h3>
                   <p>Document actions will appear here when recorded by the server.</p>
                 </div>
@@ -388,9 +554,9 @@ function App() {
                       <div className="audit-action">{event.action}</div>
                       <div className="audit-meta">
                         {event.actorEmail ?? `User #${event.actorUserId ?? "unknown"}`}
-                        {" · "}
+                        {" Â· "}
                         {new Date(event.createdAt).toLocaleString()}
-                        {event.documentId !== null && ` · Document #${event.documentId}`}
+                        {event.documentId !== null && ` Â· Document #${event.documentId}`}
                       </div>
                       <span className={`outcome-badge ${event.outcome}`}>
                         {event.outcome}
@@ -412,3 +578,5 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
   </React.StrictMode>
 );
+
+
