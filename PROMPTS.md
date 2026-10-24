@@ -117,3 +117,33 @@ only after actual commits exist.
   plus safe Workbench steps. Database/user creation and migration remain
   pending explicit target confirmation and valid local credentials.
 - **Commit:** None; no commit or push was performed.
+
+## 2026-10-24 — Remote clone validation and dependency correction
+
+- **Prompt/task:** Inspect the existing clone and feature branch, review the
+  staged snapshot for secrets and unrelated files, run the project checks, and
+  publish verified milestone work without rewriting history or touching
+  MySQL.
+- **Use:** AI fetched the existing remote refs and confirmed that the staged
+  application snapshot exactly matched remote `main` at
+  `fd6ca82ba57cdd427241a5a5df2ddead7d1f580f`. The local feature branch was
+  safely fast-forwarded to that commit; the already-published app changes
+  were not duplicated. `.env`, environment-specific files, private keys and
+  upload/storage paths are ignored; no such files or credentials were staged.
+- **Actual problems discovered and fixes made:**
+  - The clone had no `node_modules`, so the first test, typecheck and build
+    attempts could not find Vitest or TypeScript. `npm ci` restored exactly the
+    lockfile dependencies.
+  - `npm audit` then identified high-severity advisory
+    GHSA-mrhx-c7xc-m3w5 in Zod 3.25.76. A targeted update to Zod 4.6.7 was
+    compatible with the current code and cleared the advisory; no broad
+    `npm audit fix --force` was used.
+- **Verification:** After the targeted update, `npm test` reported 15 passed
+  and 1 skipped (the isolated MySQL integration test), `npm run typecheck`
+  passed, `npm run build` passed, and `npm audit` reported zero
+  vulnerabilities. The MySQL integration test remains skipped because no
+  isolated test database/credentials are configured; no connection check or
+  migration was run.
+- **Commit:** The dependency correction and this entry are committed on
+  `trustvault-local-work`; the commit identifier is recorded in the subsequent
+  history after the commit exists.
