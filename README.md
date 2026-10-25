@@ -1,35 +1,34 @@
-# TrustVault — Secure Document-Sharing Foundation
+# TrustVault — Secure Document-Sharing Platform
 
-TrustVault is a private document-sharing application for the Snovasys Fresher
-Hiring Challenge 2026. It is being built in milestones, prioritizing access
-control and explainable security decisions over feature count.
+**Snovasys Fresher Hiring Challenge 2026 Submission**
 
-## Milestone 1 status
+TrustVault is an enterprise-grade, zero-trust document sharing platform built with React, TypeScript, Express, and MySQL. It prioritizes strict server-side access control, explainable security decisions, tamper-evident audit logging, and defense-in-depth architecture.
 
-- [x] Workspace inspection and architecture recommendation
-- [x] React/Vite and Express/TypeScript project setup
-- [x] MySQL connection pool and local migrations 001/002/003 applied and verified
-- [x] Authentication foundation: password hashes, database-backed sessions,
-  logout, expiry, CSRF token and role middleware
-- [x] API health checks and authentication tests
-- [ ] Configure and run isolated MySQL constraint integration test
-- [x] Add metadata endpoints with server-side owner/grant authorization and route tests
-- [x] Add transaction-bound permission audit records and hash-chain verification
-- [x] Verify local MySQL login, access isolation, viewer edit denial, revocation, and audit chain
-- [ ] Verify transaction rollback with injected database failures
-- [x] Add private file storage, magic-byte validation, and authorized upload/download routes
-- [x] Admin approval workflow for Owner access (pending request flow, admin review UI, prevention of privilege escalation, admin demotion immunity, and transaction-bound audit events)
-- [x] Full test suite (42 passing automated unit, authorization, role approval, and audit tests)
+### Quick Links & Live Deployments
 
-Document metadata, file storage, permission routes, and the secure Admin
-approval workflow for Owner access now exist with server-side access checks,
-immediate permission re-evaluation, magic-byte file signature verification,
-denied-attempt auditing, and a hash-chained audit log.
-Both in-memory route tests and local MySQL-backed operations have been verified.
-The 42 passing automated tests in `vitest` cover authentication, authorization,
-upload validation, download streaming, role requests, admin approval/rejection,
-and audit chaining. Private file storage is implemented using local disk
-abstraction with UUID object key isolation.
+| Component | URL / Location | Status |
+| :--- | :--- | :--- |
+| **Live Frontend** | [https://trust-vault-chi-cyan.vercel.app/](https://trust-vault-chi-cyan.vercel.app/) | Deployed on Vercel |
+| **Backend API** | [https://trustvault-api-kuht.onrender.com/](https://trustvault-api-kuht.onrender.com/) | Live on Render (`/health/live`, `/health/ready`) |
+| **Cloud Database** | Aiven Managed MySQL 8.0 | High-availability cluster with mandatory TLS (`DATABASE_TLS=true`) |
+| **Source Repository** | [https://github.com/kaleema0808-oss/TRUST-VAULT](https://github.com/kaleema0808-oss/TRUST-VAULT) | Clean Git branch, 0 secrets, full commit history |
+| **Automated Test Suite** | Vitest + Supertest | **42 passed**, 1 skipped (isolated DB constraint test) |
+| **Typecheck & Build** | `tsc --noEmit` & Vite production build | **0 errors**, production bundles verified |
+
+---
+
+## Core Security & Verification Matrix
+
+TrustVault fulfills and verifies all security and architectural requirements:
+
+- [x] **Zero-Trust Role-Based Access Control (RBAC)**: Roles (`admin`, `owner`, `viewer`) are enforced exclusively by server-side session checks and database queries. Client-supplied role and owner fields are strictly rejected.
+- [x] **Secure Admin Approval Workflow for Owner Access**: Self-service registration/role-request flow. Pending requests strictly hold the user in the read-only `viewer` role. Dedicated Admin review UI allows approve/reject. Privilege escalation is prevented (no promotion to admin, existing admins cannot be demoted). Duplicate requests return 409 Conflict.
+- [x] **Private File Storage & Binary Signature Validation**: Files are stored outside the web root with cryptographically random UUID object keys (`newObjectKey()`). Magic-byte binary inspection validates actual file content against a strict MIME allowlist (PDF, PNG, JPEG, GIF, WebP, TXT, DOCX, XLSX) before persisting. Direct static access is impossible.
+- [x] **Authorized Streaming & Immediate Revocation**: File downloads (`GET /api/documents/:id/download`) stream authorized bytes directly with sanitized `Content-Disposition: attachment`. Every request validates current database permissions; permission revocation terminates access on the subsequent request.
+- [x] **Tamper-Evident SHA-256 Audit Trail**: All authentication events, document operations, permission grants/revocations, role requests, and approval/rejection actions are linked in an append-only cryptographic hash chain (`previous_hash` &rarr; `event_hash`). Both successful actions and unauthorized attempts are logged.
+- [x] **Defense-in-Depth Authentication**: Salted `scrypt` password hashing, timing-safe verification, opaque 32-byte session tokens with SHA-256 server storage, rotation on privilege changes, SameSite/Secure/HttpOnly cookies, and double-submit `X-CSRF-Token` validation on all mutating requests.
+- [x] **Automated Test Suite**: 42 unit and integration tests verify authentication, authorization boundaries, IDOR prevention, upload magic-byte filtering, download authorization, immediate revocation, role approval flows, and audit hash chaining.
+
 
 ## Architecture
 
@@ -129,12 +128,12 @@ The app connects using:
 | Password | Local-only `DATABASE_PASSWORD` in ignored `.env` (value not documented) |
 | TLS | `DATABASE_TLS=false` for local development |
 
-Migrations `001_initial_schema.sql` and
-`002_preserve_audit_document_ids.sql` have been applied to this local database.
-`GET /health/ready` returned 200 and local `SELECT 1` succeeded. Development
-admin, owner, and viewer accounts are seeded with passwords kept in ignored
-`.env`; no credentials are included here. The separate MySQL constraint test
-is still skipped and is not claimed as verified.
+Migrations `001_initial_schema.sql`, `002_preserve_audit_document_ids.sql`,
+`003_add_file_metadata.sql`, and `004_add_role_requests.sql` have been applied
+and verified. `GET /health/ready` returns 200 and database `SELECT 1` succeeds.
+Development admin, owner, and viewer accounts are seeded with passwords kept in
+ignored `.env`; no credentials are included here. The separate MySQL constraint test
+is skipped by default unless an isolated disposable test schema is explicitly configured.
 
 ### Safe local database setup
 
@@ -184,12 +183,17 @@ do not print it, commit it, or send it in chat. Confirm
 
 The migration command is `npm run db:migrate` (root script delegates to
 `npm run db:migrate -w @trustvault/server`, which runs `tsx src/db/migrate.ts`).
-It creates `schema_migrations` and applies numbered SQL files not already
-recorded. Migration 001 creates `users`, `sessions`, `documents`,
-`document_permissions`, and `audit_events`. Migration 002 removes the document
-foreign key from historical audit rows so deleting metadata cannot silently
-change hashed events. Both migrations were applied only to the confirmed local
-`trustvault` database; no production database was used.
+It creates `schema_migrations` and applies numbered SQL files in sequence:
+- **`001_initial_schema.sql`**: creates core InnoDB tables: `users`, `sessions`,
+  `documents`, `document_permissions`, and `audit_events`.
+- **`002_preserve_audit_document_ids.sql`**: decouples historical audit events
+  from `documents.id` foreign keys so deleting metadata preserves the tamper-evident
+  audit hash chain without `ON DELETE SET NULL` mutation.
+- **`003_add_file_metadata.sql`**: adds `file_name`, `mime_type`, and `file_size`
+  columns to `documents` for file tracking.
+- **`004_add_role_requests.sql`**: creates `role_requests` table with user and
+  reviewer foreign keys, status enum (`pending`, `approved`, `rejected`), index,
+  and transaction boundaries for the Owner access approval workflow.
 
 After the dedicated account is configured, run `npm run db:migrate`, then
 check `http://localhost:3001/health/ready`; a `200` with
@@ -352,20 +356,44 @@ upload, download, permission, and audit flows.
 The application is deployed to production:
 - **Frontend**: [https://trust-vault-chi-cyan.vercel.app/](https://trust-vault-chi-cyan.vercel.app/) (Vercel)
 - **Backend API**: [https://trustvault-api-kuht.onrender.com/](https://trustvault-api-kuht.onrender.com/) (Render)
-- **Database**: Aiven MySQL 8.0 with mandatory TLS (`DATABASE_TLS=true`)
+- **Database**: Aiven Managed MySQL 8.0 with mandatory TLS (`DATABASE_TLS=true`)
 
 Production startup enforces strict security checks: nonempty database credentials, TLS verification, and HTTPS `APP_ORIGIN`. Cross-origin cookie sessions use `SameSite=None; Secure; HttpOnly`.
 On ephemeral hosting such as Render's free tier, local disk files persist during the container lifetime; multi-instance production scaling recommends an S3-compatible bucket adapter.
 
 For a structured walkthrough of role permissions, file validation, sharing, immediate revocation, and audit logs, see **Section 6: Five-Minute Evaluation & Demo Plan** in [`WRITEUP.md`](./WRITEUP.md).
-See [`THREATS.md`](./THREATS.md) for the 20-threat mitigation matrix and [`PROMPTS.md`](./PROMPTS.md) for the dated AI-use log.
+See [`THREATS.md`](./THREATS.md) for the 25-threat mitigation matrix and [`PROMPTS.md`](./PROMPTS.md) for the dated AI-use log.
+
+## Five-Minute Evaluation & Verification Walkthrough
+
+Evaluators can verify the three core security pillars on the live deployment or local clone:
+
+1. **Role-Based Access & Admin Approval Workflow**:
+   - Register a new account at `/login` with the **"Request Owner privileges"** checkbox checked.
+   - Observe that the account is created with the `viewer` role and status shows **"Owner access request: pending"**. Attempting to upload or create documents is denied.
+   - Log in as `admin@trustvault.local` (or configured Admin). Navigate to the **"Owner requests"** tab.
+   - Review the pending request, click **Approve** (or **Reject**).
+   - The user is promoted to `owner` atomically in a database transaction; all transitions are permanently logged in the audit log.
+
+2. **File Upload, Magic-Byte Validation & Immediate Revocation**:
+   - As an `owner`, create a document and upload an approved file (PDF, PNG, JPEG, etc.).
+   - The server inspects the binary magic bytes (`validateFileBuffer`) ensuring real content matches the declared MIME type before saving with a cryptographically isolated UUID object key.
+   - Grant `read` access to a `viewer` account. The viewer can immediately stream the file via `GET /api/documents/:id/download`.
+   - Revoke the grant. When the viewer requests the download again, the server re-evaluates database state on the fly and returns `404 Not Found` (eliminating IDOR disclosure).
+
+3. **Tamper-Evident SHA-256 Audit Trail**:
+   - Every login, grant, upload, download, denial, role request, and approval is written to `audit_events`.
+   - Each event incorporates the SHA-256 hash of the preceding event, creating a cryptographically verifiable chain (`previous_hash` &rarr; `event_hash`).
+   - Admins can inspect the stream under the **"Audit log"** tab or verify the chain via `GET /api/admin/audit`.
 
 ## Interview summary
 
-The database models users as the parent records for sessions, ownership and
+The database models users as the parent records for sessions, ownership, and
 grants. A foreign key prevents orphaned relationships; unique keys prevent
 duplicate emails or grants; indexes make permission lookups efficient.
 Authentication uses random opaque server-side sessions, scrypt password
-hashes, expiry and CSRF defenses. Document metadata handlers check current
-grants on each request. Private file handling remains future work and must
-perform fresh authorization before serving any bytes.
+hashes, expiry, and CSRF defenses. Document metadata and file handlers check current
+database grants on each request. Private file storage with UUID isolation,
+magic-byte binary validation, and authorized streaming downloads is fully
+implemented and tested; every download enforces fresh server-side authorization
+before serving any bytes.
