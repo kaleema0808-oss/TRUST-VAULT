@@ -127,12 +127,6 @@ export function AuthPage({ onAuth }: Props) {
             {mode === "login" ? "Create an account" : "Sign in instead"}
           </button>
         </p>
-
-        {mode === "login" && (
-          <div className="alert alert-info" style={{ marginTop: "var(--sp-4)", fontSize: "var(--text-xs)" }}>
-            💡 Demo accounts can be seeded by the admin after configuring the .env file and running <code>npm run seed:dev</code>
-          </div>
-        )}
       </div>
     </div>
   );
