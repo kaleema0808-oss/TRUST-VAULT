@@ -16,6 +16,9 @@ const options: PoolOptions = {
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000,
+  connectTimeout: 10000,
   ...(env.DATABASE_TLS === "true"
     ? {
         ssl: {

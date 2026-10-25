@@ -70,6 +70,21 @@ export function createApp(
       response.status(503).json({ status: "unavailable" });
     }
   });
+  app.get("/health/db-status", async (_request, response) => {
+    try {
+      await checkDatabase();
+      response.json({ status: "ok", database: "connected" });
+    } catch (error: unknown) {
+      const err = error as { name?: string; code?: string; errno?: number; sqlState?: string };
+      response.status(503).json({
+        status: "unavailable",
+        errorName: err.name,
+        errorCode: err.code,
+        errno: err.errno,
+        sqlState: err.sqlState,
+      });
+    }
+  });
 
   app.use("/api/auth", rateLimit({
     windowMs: 15 * 60 * 1000,
