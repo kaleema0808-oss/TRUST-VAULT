@@ -216,4 +216,23 @@ only after actual commits exist.
   - `npm run typecheck`: 0 errors.
   - `npm run build`: cleanly compiles client and server, copying migrations.
   - `npm test`: 34 passed, 1 skipped.
-- **Commit:** Pending user review.
+- **Commit:** `cf4be54848d7d6b35d7945ca69532585f9e2bceb`.
+
+## 2026-10-25 — Secure Admin approval workflow for Owner access
+
+- **Prompt/task:** Implement a secure Admin approval workflow for Owner access in the existing TrustVault project. Inspect current architecture, auth, registration flow, roles, database migrations, audit logging, tests, and deployment. Requirements: new users can request Owner access through registration or role-request flow; requests remain pending until authenticated Admin approves; pending users must not receive Owner privileges; never trust client-supplied role; Admin-only interface to list, approve, reject requests; record request, approval, rejection, and role-change events in audit trail with actor, target user, timestamp, outcome; prevent duplicate requests, unauthorized approvals, and privilege escalation; existing Admin accounts must not be demoted; add database migration 004 and automated tests; keep existing demo accounts working; update README, API docs, THREATS.md, and PROMPTS.md; run typecheck, build, and tests.
+- **Use:** AI performed end-to-end design, implementation, and verification:
+  - Inspected Git status (`clean`), database schema, and test suite baseline (34 passed, 1 skipped).
+  - Added database migration `server/src/db/migrations/004_add_role_requests.sql` creating InnoDB `role_requests` table with foreign keys to `users(id)` for requester and reviewer, status enum (`pending`, `approved`, `rejected`), and indexes on user status and request status.
+  - Implemented `RoleRequestRepository` and `MysqlRoleRequestRepository` in `server/src/auth/repository.ts` with serialized isolation (`FOR UPDATE` row locking), duplicate request checks, admin demotion immunity, and transactional inclusion in the tamper-evident SHA-256 audit hash chain via `appendAuditEventWithConnection`.
+  - Updated `POST /api/auth/register` to support optional `requestOwner` and `reason` while strictly validating with Zod `.strict()` to reject client-supplied `role` fields. New accounts are strictly created with `role: "viewer"`.
+  - Added authenticated viewer endpoints `POST /api/auth/role-requests` (with duplicate detection returning 409 Conflict) and `GET /api/auth/role-requests/mine`.
+  - Added Admin endpoints `GET /api/admin/role-requests`, `POST /api/admin/role-requests/:id/approve`, and `POST /api/admin/role-requests/:id/reject` in `server/src/app.ts` with CSRF validation and automated audit logging of unauthorized non-admin attempts.
+  - Extended client API (`client/src/api.ts`), registration UI with Owner request checkbox (`client/src/AuthPage.tsx`), viewer pending notification banner & request action (`client/src/main.tsx`), Admin "Owner requests" review view with pending counter badge, and status badges in `client/src/style.css`.
+  - Created automated test suite `server/tests/role-approval.test.ts` covering pending access denial, unforgeable role assignment, duplicate request rejection, unauthorized approval defense, approval workflow, rejection workflow, admin demotion immunity, and cryptographic audit chain verification.
+  - Updated `README.md` (milestone, schema, API endpoints table, workflow details), `THREATS.md` (threats 21-25 with mitigations and test references), and `PROMPTS.md`.
+- **Verification:**
+  - `npm run typecheck`: 0 errors across `@trustvault/server` and `@trustvault/client`.
+  - `npm test`: 42 passed, 1 skipped across 6 test suites (8 new tests in `role-approval.test.ts`).
+  - `npm run build`: compiled client and server cleanly with migration files copied to `dist/db/migrations`.
+- **Commit:** None, pending explicit user approval as instructed.

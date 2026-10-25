@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import { hashPassword, verifyPassword } from "../security/password.js";
 import { hashToken, requireAuthentication, requireCsrf } from "./middleware.js";
-import type { AuthRepository } from "./repository.js";
+import type { AuthRepository, RoleRequestRepository } from "./repository.js";
 
 const loginSchema = z.object({
   email: z.string().trim().email().max(254),
@@ -14,6 +14,12 @@ const loginSchema = z.object({
 const registerSchema = z.object({
   email: z.string().trim().email().max(254),
   password: z.string().min(12).max(128),
+  requestOwner: z.boolean().optional(),
+  reason: z.string().trim().max(255).optional(),
+}).strict();
+
+const createRoleRequestSchema = z.object({
+  reason: z.string().trim().max(255).optional(),
 }).strict();
 
 function makeToken(): string {
@@ -37,7 +43,11 @@ function setSessionCookie(response: Response, token: string, config: AppConfig, 
   });
 }
 
-export function createAuthRouter(repository: AuthRepository, config: AppConfig): Router {
+export function createAuthRouter(
+  repository: AuthRepository,
+  config: AppConfig,
+  roleRequestRepository?: RoleRequestRepository,
+): Router {
   const router = Router();
   const authenticate = requireAuthentication(repository);
   const sessionTtlMs = config.sessionTtlHours * 60 * 60 * 1000;
@@ -55,7 +65,19 @@ export function createAuthRouter(repository: AuthRepository, config: AppConfig):
         return;
       }
       const passwordHash = await hashPassword(parsed.data.password);
+      // New users are ALWAYS created as viewer - client role fields are never trusted
       const user = await repository.createUser(parsed.data.email.toLowerCase(), passwordHash, "viewer");
+
+      let pendingRoleRequest = false;
+      if (parsed.data.requestOwner && roleRequestRepository) {
+        await roleRequestRepository.createRoleRequest({
+          userId: user.id,
+          requestedRole: "owner",
+          reason: parsed.data.reason,
+        });
+        pendingRoleRequest = true;
+      }
+
       const token = makeToken();
       const csrfToken = makeToken();
       const expiresAt = new Date(Date.now() + sessionTtlMs);
@@ -69,6 +91,7 @@ export function createAuthRouter(repository: AuthRepository, config: AppConfig):
       response.status(201).json({
         user: { id: user.id, email: user.email, role: user.role },
         csrfToken,
+        pendingRoleRequest,
       });
     } catch (error) {
       next(error);
@@ -109,8 +132,76 @@ export function createAuthRouter(repository: AuthRepository, config: AppConfig):
     }
   });
 
-  router.get("/me", authenticate, (request, response) => {
-    response.json({ user: request.auth?.user });
+  router.get("/me", authenticate, async (request, response, next) => {
+    try {
+      let pendingOwnerRequest = false;
+      if (roleRequestRepository && request.auth?.user.id) {
+        const pending = await roleRequestRepository.findPendingByUserId(request.auth.user.id);
+        pendingOwnerRequest = pending !== null;
+      }
+      response.json({
+        user: request.auth?.user,
+        pendingOwnerRequest,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/role-requests", authenticate, requireCsrf, async (request, response, next) => {
+    if (!roleRequestRepository) {
+      response.status(501).json({ error: "Role requests are not configured" });
+      return;
+    }
+    const parsed = createRoleRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: "Invalid role request parameters" });
+      return;
+    }
+    const actor = request.auth!.user;
+    if (actor.role !== "viewer") {
+      response.status(400).json({ error: "Only viewers can request Owner access" });
+      return;
+    }
+    try {
+      const existing = await roleRequestRepository.findPendingByUserId(actor.id);
+      if (existing) {
+        await roleRequestRepository.appendAudit({
+          actorUserId: actor.id,
+          documentId: null,
+          action: "role_request.create",
+          outcome: "denied",
+          details: { reason: "duplicate_request", targetUserId: actor.id, requestedRole: "owner" },
+        });
+        response.status(409).json({ error: "A pending owner request already exists for this account" });
+        return;
+      }
+      const roleRequest = await roleRequestRepository.createRoleRequest({
+        userId: actor.id,
+        requestedRole: "owner",
+        reason: parsed.data.reason,
+      });
+      response.status(201).json({ request: roleRequest });
+    } catch (error) {
+      if ((error as { code?: string })?.code === "DUPLICATE_PENDING_REQUEST") {
+        response.status(409).json({ error: "A pending owner request already exists for this account" });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  router.get("/role-requests/mine", authenticate, async (request, response, next) => {
+    if (!roleRequestRepository) {
+      response.json({ request: null });
+      return;
+    }
+    try {
+      const pending = await roleRequestRepository.findPendingByUserId(request.auth!.user.id);
+      response.json({ request: pending });
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get("/users", authenticate, async (_request, response, next) => {

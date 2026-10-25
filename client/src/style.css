@@ -661,6 +661,21 @@ td:first-child { color: var(--text-primary); }
 .outcome-badge.allowed { background: rgba(54,211,153,.12); color: var(--accent-success); }
 .outcome-badge.denied  { background: rgba(255,79,106,.12); color: var(--accent-danger); }
 
+/* ---------- Role request status badges ---------------------------- */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.status-badge.pending  { background: rgba(245,165,36,.15); color: var(--accent-warn); }
+.status-badge.approved { background: rgba(54,211,153,.15); color: var(--accent-success); }
+.status-badge.rejected { background: rgba(255,79,106,.15); color: var(--accent-danger); }
+
 /* ---------- Permission list items -------------------------------- */
 .perm-item {
   display: flex;

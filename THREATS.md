@@ -1,10 +1,12 @@
 # TrustVault threat model
 
-Threat register updated 2026-10-24. The API now includes full file upload and
+Threat register updated 2026-10-25. The API now includes full file upload and
 authorized download routes, local disk storage abstraction with random UUID
 object isolation, magic-byte binary validation, strict MIME allowlisting,
 double-submit CSRF enforcement on file uploads, immediate revocation on
-downloads, and comprehensive automated test coverage in `upload-download.test.ts`.
+downloads, and the secure Admin approval workflow for Owner access with
+demotion protection, duplicate request prevention, unauthorized approval defense,
+and comprehensive automated test coverage in `upload-download.test.ts` and `role-approval.test.ts`.
 
 | # | Threat | Current mitigation/status | Verification or remaining test |
 | --- | --- | --- | --- |
@@ -28,6 +30,11 @@ downloads, and comprehensive automated test coverage in `upload-download.test.ts
 | 18 | Stolen database/storage credentials | Least-privilege accounts, mandatory production TLS (`DATABASE_TLS=true`), secret environment variables. | Configuration checks fail closed when required production secrets or TLS are missing. |
 | 19 | Destructive admin or owner deletion request | Require authorization, delete metadata and disk file, and audit the operation; orphan prevention on failures. | Tests verify authorized deletion removes metadata and cleans up disk files. |
 | 20 | Production data contaminates automated tests | In-memory mock repositories and isolated test databases with synthetic fixtures; test bootstrap rejects production configs. | All automated tests run isolated in memory or on dedicated test schemas. |
+| 21 | Privilege escalation via client-supplied role parameter | Registration schema strictly validates request body with Zod `.strict()`, rejecting untrusted `role` fields; server assigns `viewer` role unconditionally on registration. | Automated tests in `role-approval.test.ts` verify client-supplied `role: "admin"` is rejected with 400. |
+| 22 | Pending user accesses Owner functionality before approval | Users requesting Owner access remain `viewer` in the database while pending; server rejects document creation and file uploads with 403 Forbidden and audits the denial. | Automated tests in `role-approval.test.ts` verify pending access denial and audit event creation. |
+| 23 | Unauthorized approval or rejection by non-admin | Approval/rejection routes enforce `requireRole("admin")` and double-submit CSRF; unauthorized attempts from viewers or owners are rejected with 403 and audited with actor ID and denied outcome. | Automated tests in `role-approval.test.ts` verify viewer/owner approval attempts are rejected with 403 and logged in audit log. |
+| 24 | Duplicate role requests flood or bypass review queue | Database queries check for active `pending` requests with row-level locks (`FOR UPDATE`); subsequent requests while one is pending return 409 Conflict and log a denied audit event. | Automated tests in `role-approval.test.ts` verify second request returns 409 and logs denied audit record. |
+| 25 | Privilege manipulation demoting existing Admin account | Role request approval transaction asserts target user's current role is not `admin`; refuses to alter an administrator's role and fails closed. | Automated tests in `role-approval.test.ts` verify approval targeting admin fails and preserves admin role. |
 
 ## Accepted residual risks (initial)
 

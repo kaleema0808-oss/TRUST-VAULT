@@ -4,8 +4,8 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import type { AppConfig } from "./config.js";
 import { createAuthRouter } from "./auth/routes.js";
-import { requireAuthentication, requireRole } from "./auth/middleware.js";
-import type { AuthRepository, DocumentRepository } from "./auth/repository.js";
+import { requireAuthentication, requireCsrf, requireRole } from "./auth/middleware.js";
+import type { AuthRepository, DocumentRepository, RoleRequestRepository } from "./auth/repository.js";
 import { createDocumentRouter } from "./documents/routes.js";
 import { z } from "zod";
 
@@ -16,6 +16,7 @@ export function createApp(
   config: AppConfig,
   checkDatabase: HealthCheck,
   documentRepository?: DocumentRepository,
+  roleRequestRepository?: RoleRequestRepository,
 ) {
   const app = express();
   app.set("trust proxy", 1);
@@ -75,7 +76,7 @@ export function createApp(
     limit: 20,
     standardHeaders: true,
     legacyHeaders: false,
-  }), createAuthRouter(repository, config));
+  }), createAuthRouter(repository, config, roleRequestRepository));
 
   if (documentRepository) {
     app.use("/api/documents", createDocumentRouter(repository, documentRepository));
@@ -103,6 +104,119 @@ export function createApp(
         try {
           const events = await documentRepository.listAuditEvents(parsed.data);
           response.json({ events });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  }
+
+  if (roleRequestRepository) {
+    const requestIdSchema = z.coerce.number().int().positive().safe();
+    const rejectSchema = z.object({
+      reason: z.string().trim().max(255).optional(),
+    }).strict();
+
+    // Helper for admin authorization with audit recording on unauthorized attempt
+    const requireAdminWithAudit = (action: string) => async (
+      request: express.Request,
+      response: express.Response,
+      next: express.NextFunction,
+    ) => {
+      if (!request.auth) {
+        response.status(401).json({ error: "Authentication required" });
+        return;
+      }
+      if (request.auth.user.role !== "admin") {
+        await roleRequestRepository.appendAudit({
+          actorUserId: request.auth.user.id,
+          documentId: null,
+          action,
+          outcome: "denied",
+          details: {
+            reason: "unauthorized_role",
+            requiredRole: "admin",
+            actorRole: request.auth.user.role,
+            requestId: request.params.id ? Number(request.params.id) : undefined,
+          },
+        });
+        response.status(403).json({ error: "Forbidden" });
+        return;
+      }
+      next();
+    };
+
+    app.get(
+      "/api/admin/role-requests",
+      requireAuthentication(repository),
+      requireRole("admin"),
+      async (request, response, next) => {
+        try {
+          const statusParam = request.query.status as string | undefined;
+          const status = statusParam === "pending" || statusParam === "approved" || statusParam === "rejected"
+            ? statusParam
+            : undefined;
+          const requests = await roleRequestRepository.listRoleRequests(status);
+          response.json({ requests });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+
+    app.post(
+      "/api/admin/role-requests/:id/approve",
+      requireAuthentication(repository),
+      requireAdminWithAudit("role_request.approve"),
+      requireCsrf,
+      async (request, response, next) => {
+        const parsedId = requestIdSchema.safeParse(request.params.id);
+        if (!parsedId.success) {
+          response.status(400).json({ error: "Invalid request ID" });
+          return;
+        }
+        try {
+          const result = await roleRequestRepository.approveRoleRequest(parsedId.data, request.auth!.user.id);
+          if (!result.success) {
+            const status = result.error === "Role request not found" ? 404 : 400;
+            response.status(status).json({ error: result.error });
+            return;
+          }
+          response.json({ message: "Owner access approved", request: result.request });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+
+    app.post(
+      "/api/admin/role-requests/:id/reject",
+      requireAuthentication(repository),
+      requireAdminWithAudit("role_request.reject"),
+      requireCsrf,
+      async (request, response, next) => {
+        const parsedId = requestIdSchema.safeParse(request.params.id);
+        if (!parsedId.success) {
+          response.status(400).json({ error: "Invalid request ID" });
+          return;
+        }
+        const parsedBody = rejectSchema.safeParse(request.body);
+        if (!parsedBody.success) {
+          response.status(400).json({ error: "Invalid rejection parameters" });
+          return;
+        }
+        try {
+          const result = await roleRequestRepository.rejectRoleRequest(
+            parsedId.data,
+            request.auth!.user.id,
+            parsedBody.data.reason,
+          );
+          if (!result.success) {
+            const status = result.error === "Role request not found" ? 404 : 400;
+            response.status(status).json({ error: result.error });
+            return;
+          }
+          response.json({ message: "Owner access rejected", request: result.request });
         } catch (error) {
           next(error);
         }

@@ -18,15 +18,18 @@ control and explainable security decisions over feature count.
 - [x] Verify local MySQL login, access isolation, viewer edit denial, revocation, and audit chain
 - [ ] Verify transaction rollback with injected database failures
 - [x] Add private file storage, magic-byte validation, and authorized upload/download routes
-- [x] Full test suite (29 passing automated unit and authorization tests)
+- [x] Admin approval workflow for Owner access (pending request flow, admin review UI, prevention of privilege escalation, admin demotion immunity, and transaction-bound audit events)
+- [x] Full test suite (42 passing automated unit, authorization, role approval, and audit tests)
 
-Document metadata, file storage, and permission routes now exist with
-server-side access checks, immediate permission re-evaluation, magic-byte file
-signature verification, denied-attempt auditing, and a hash-chained audit log.
+Document metadata, file storage, permission routes, and the secure Admin
+approval workflow for Owner access now exist with server-side access checks,
+immediate permission re-evaluation, magic-byte file signature verification,
+denied-attempt auditing, and a hash-chained audit log.
 Both in-memory route tests and local MySQL-backed operations have been verified.
-The 29 passing automated tests in `vitest` cover authentication, authorization,
-upload validation, download streaming, and audit chaining. Private file storage
-is implemented using local disk abstraction with UUID object key isolation.
+The 42 passing automated tests in `vitest` cover authentication, authorization,
+upload validation, download streaming, role requests, admin approval/rejection,
+and audit chaining. Private file storage is implemented using local disk
+abstraction with UUID object key isolation.
 
 ## Architecture
 
@@ -84,6 +87,13 @@ creates these InnoDB tables:
   `ON DELETE SET NULL` silently changing old hashed events when metadata is
   deleted. A database administrator can still rewrite and recompute the
   unanchored chain.
+- **`role_requests`**: stores access promotion requests for Owner privileges
+  ([`server/src/db/migrations/004_add_role_requests.sql`](./server/src/db/migrations/004_add_role_requests.sql)).
+  Foreign keys point to the requesting user (`user_id`) and the reviewing admin
+  (`reviewed_by`). Status transitions through `pending`, `approved`, and `rejected`.
+  Application transactions prevent duplicate pending requests, protect existing
+  administrators from demotion, and link request/approval/rejection/role-change
+  actions to the audit trail.
 
 A **primary key** gives each row its stable identity. A **foreign key** makes
 relationships real database rules, not just assumptions in code. A **unique
@@ -284,11 +294,17 @@ is not a passing database-constraint verification.
 | --- | --- | --- |
 | `GET /health/live` | Public | Liveness only |
 | `GET /health/ready` | Public | Safe `SELECT 1` readiness check |
+| `POST /api/auth/register` | Public, same configured `Origin` required | Registers a new account as `viewer`; optional `requestOwner` creates a pending role request; client-supplied `role` fields are rejected |
 | `POST /api/auth/login` | Public, same configured `Origin` required | Validates credentials; returns generic credential failure |
-| `GET /api/auth/me` | Authenticated session | Returns server-derived account identity and role |
+| `GET /api/auth/me` | Authenticated session | Returns server-derived account identity, role, and pending owner request status |
+| `POST /api/auth/role-requests` | Authenticated `viewer` role + valid CSRF token | Creates a pending Owner access request; duplicate requests return 409 and are audited |
+| `GET /api/auth/role-requests/mine` | Authenticated session | Returns current pending Owner access request for the authenticated user, or null |
 | `GET /api/auth/csrf` | Authenticated session | Rotates and returns that session's CSRF token |
 | `POST /api/auth/logout` | Authenticated session + valid CSRF token + configured `Origin` | Deletes current session and clears cookie |
 | `GET /api/admin/check` | Authenticated `admin` role | Small role-middleware check; returns 403 to other roles |
+| `GET /api/admin/role-requests` | Authenticated `admin` role | Lists pending, approved, or rejected Owner access requests |
+| `POST /api/admin/role-requests/:id/approve` | Authenticated `admin` role + valid CSRF token | Approves pending request, promotes viewer to owner, audits approval and role change; non-admin attempts are denied and audited |
+| `POST /api/admin/role-requests/:id/reject` | Authenticated `admin` role + valid CSRF token | Rejects pending request with optional reason, audits rejection; non-admin attempts are denied and audited |
 | `GET /api/documents` | Authenticated user | Lists documents readable by this user; collection access is audited |
 | `POST /api/documents` | `admin` or `owner`, valid CSRF token | Creates metadata owned by the authenticated account; client owner/role fields are rejected |
 | `GET /api/documents/:documentId` | Authenticated owner, admin, or user with current read grant | Returns authorized metadata only; inaccessible IDs return generic 404 and are audited |
@@ -299,6 +315,17 @@ is not a passing database-constraint verification.
 | `POST /api/documents/:documentId/upload` | `admin`, owning `owner`, or `owner` with explicit edit grant; valid CSRF token | Multipart upload with magic-byte signature validation; stores file on isolated disk and audits event |
 | `GET /api/documents/:documentId/download` | Authenticated owner, admin, or user with current read grant | Streams authorized file with `Content-Disposition: attachment`; audits allowed and denied requests |
 | `GET /api/admin/audit` | Authenticated `admin` role | Lists filterable audit event records with SHA-256 hash chaining |
+
+### Admin approval workflow for Owner access
+
+TrustVault enforces a strict, multi-layer authorization model for Owner access:
+1. **Request creation**: New users can request Owner privileges during registration (via the `requestOwner` flag) or an existing logged-in `viewer` can submit an Owner request via `POST /api/auth/role-requests`.
+2. **Pending access isolation**: All submitted requests default to `pending` status. Users with pending requests are strictly assigned the `viewer` role in the database. They cannot upload files, create documents, or access any protected Owner functionality. Attempted Owner actions while pending are rejected with 403 Forbidden and recorded in the audit trail.
+3. **No client trust**: Role assignments are never derived from client input. Registration schemas strictly disallow unexpected fields (such as client-supplied `role: "admin"` or `role: "owner"`). Authorization is determined exclusively by the database-backed session user record on the server.
+4. **Duplicate prevention**: Submitting a request when a pending request already exists for that account is rejected with `409 Conflict` and audited as a denied attempt.
+5. **Admin-only review interface**: Administrators have a dedicated UI tab ("Owner requests") and REST endpoints to list requests and approve or reject them. Non-administrators attempting to call approve or reject endpoints receive 403 Forbidden, and their unauthorized attempts are audited with actor ID, target request ID, and denied outcome.
+6. **Privilege escalation & demotion protection**: The approval workflow can only promote a `viewer` to an `owner`. It cannot promote anyone to `admin`, nor can an existing `admin` account ever be demoted through this workflow.
+7. **Comprehensive transactional audit trail**: All request creation, approval, rejection, and role-change events (`role_request.create`, `role_request.approve`, `role_request.reject`, and `user.role_change`) are committed in database transactions and linked into the SHA-256 tamper-evident hash chain with actor, target user, timestamp, and outcome.
 
 The global `viewer` role is read-only even if someone submits an edit grant.
 Only an `owner` may use a separate explicit edit grant on a document they do

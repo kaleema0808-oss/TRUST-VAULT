@@ -42,6 +42,45 @@ export type DocumentPermission = {
   canEdit: boolean;
 };
 
+export type RoleRequestStatus = "pending" | "approved" | "rejected";
+
+export type RoleRequestRecord = {
+  id: number;
+  userId: number;
+  userEmail: string;
+  requestedRole: "owner";
+  status: RoleRequestStatus;
+  reason: string | null;
+  reviewedBy: number | null;
+  reviewedByEmail?: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateRoleRequestInput = {
+  userId: number;
+  requestedRole: "owner";
+  reason?: string;
+};
+
+export interface RoleRequestRepository {
+  createRoleRequest(input: CreateRoleRequestInput): Promise<RoleRequestRecord>;
+  findPendingByUserId(userId: number): Promise<RoleRequestRecord | null>;
+  getById(id: number): Promise<RoleRequestRecord | null>;
+  listRoleRequests(status?: RoleRequestStatus): Promise<RoleRequestRecord[]>;
+  approveRoleRequest(
+    requestId: number,
+    adminUserId: number,
+  ): Promise<{ success: boolean; error?: string; request?: RoleRequestRecord }>;
+  rejectRoleRequest(
+    requestId: number,
+    adminUserId: number,
+    reason?: string,
+  ): Promise<{ success: boolean; error?: string; request?: RoleRequestRecord }>;
+  appendAudit(event: AuditInput): Promise<void>;
+}
+
 export interface AuthRepository {
   findUserByEmail(email: string): Promise<AuthUser | null>;
   findSession(tokenHash: string): Promise<{ session: AuthSession; user: AuthUser } | null>;
@@ -558,7 +597,7 @@ export class MysqlDocumentRepository implements DocumentRepository {
     const connection = await this.pool.getConnection();
     try {
       await connection.beginTransaction();
-      await this.appendAuditWithConnection(connection, event);
+      await appendAuditEventWithConnection(connection, event);
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -572,26 +611,338 @@ export class MysqlDocumentRepository implements DocumentRepository {
     connection: import("mysql2/promise").PoolConnection,
     event: AuditInput,
   ): Promise<void> {
-    const [rows] = await connection.execute<RowDataPacket[]>(
-      "SELECT event_hash FROM audit_events ORDER BY id DESC LIMIT 1 FOR UPDATE",
+    await appendAuditEventWithConnection(connection, event);
+  }
+}
+
+export async function appendAuditEventWithConnection(
+  connection: import("mysql2/promise").PoolConnection,
+  event: AuditInput,
+): Promise<void> {
+  const [rows] = await connection.execute<RowDataPacket[]>(
+    "SELECT event_hash FROM audit_events ORDER BY id DESC LIMIT 1 FOR UPDATE",
+  );
+  const previousHash = (rows[0]?.event_hash as string | null | undefined) ?? null;
+  const createdAtDate = new Date();
+  const createdAt = createdAtDate.toISOString();
+  const detailsJson = JSON.stringify(event.details);
+  const eventHash = createAuditEventHash({
+    actorUserId: event.actorUserId,
+    documentId: event.documentId,
+    action: event.action,
+    outcome: event.outcome,
+    details: event.details,
+    createdAt,
+  }, previousHash);
+  await connection.execute(
+    `INSERT INTO audit_events
+      (actor_user_id, document_id, action, outcome, details, previous_hash, event_hash, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [event.actorUserId, event.documentId, event.action, event.outcome, detailsJson, previousHash, eventHash, createdAtDate],
+  );
+}
+
+type RoleRequestRow = RowDataPacket & {
+  id: number;
+  user_id: number;
+  user_email: string;
+  requested_role: "owner";
+  status: RoleRequestStatus;
+  reason: string | null;
+  reviewed_by: number | null;
+  reviewer_email: string | null;
+  reviewed_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+};
+
+function toRoleRequest(row: RoleRequestRow): RoleRequestRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    userEmail: row.user_email,
+    requestedRole: row.requested_role,
+    status: row.status,
+    reason: row.reason,
+    reviewedBy: row.reviewed_by,
+    reviewedByEmail: row.reviewer_email ?? null,
+    reviewedAt: row.reviewed_at ? row.reviewed_at.toISOString() : null,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+export class MysqlRoleRequestRepository implements RoleRequestRepository {
+  constructor(private readonly pool: Pool) {}
+
+  async createRoleRequest(input: CreateRoleRequestInput): Promise<RoleRequestRecord> {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      // Check user exists and is a viewer
+      const [userRows] = await connection.execute<RowDataPacket[]>(
+        "SELECT id, email, role FROM users WHERE id = ? FOR UPDATE",
+        [input.userId],
+      );
+      const user = userRows[0];
+      if (!user) {
+        throw new Error("User not found");
+      }
+      if (user.role !== "viewer") {
+        throw new Error("Only viewers can request owner privileges");
+      }
+
+      // Check if user already has a pending role request
+      const [pendingRows] = await connection.execute<RowDataPacket[]>(
+        "SELECT id FROM role_requests WHERE user_id = ? AND status = 'pending' FOR UPDATE",
+        [input.userId],
+      );
+      if (pendingRows.length > 0) {
+        const err = new Error("A pending owner request already exists for this account");
+        (err as { code?: string }).code = "DUPLICATE_PENDING_REQUEST";
+        throw err;
+      }
+
+      const [result] = await connection.execute<import("mysql2").ResultSetHeader>(
+        "INSERT INTO role_requests (user_id, requested_role, status, reason) VALUES (?, ?, 'pending', ?)",
+        [input.userId, input.requestedRole, input.reason ?? null],
+      );
+      const insertId = result.insertId;
+
+      await appendAuditEventWithConnection(connection, {
+        actorUserId: input.userId,
+        documentId: null,
+        action: "role_request.create",
+        outcome: "allowed",
+        details: { targetUserId: input.userId, requestedRole: input.requestedRole, reason: input.reason ?? null, requestId: insertId },
+      });
+
+      await connection.commit();
+
+      const [rows] = await this.pool.execute<RoleRequestRow[]>(
+        `SELECT r.id, r.user_id, u.email AS user_email, r.requested_role, r.status,
+                r.reason, r.reviewed_by, rev.email AS reviewer_email, r.reviewed_at,
+                r.created_at, r.updated_at
+         FROM role_requests r
+         JOIN users u ON u.id = r.user_id
+         LEFT JOIN users rev ON rev.id = r.reviewed_by
+         WHERE r.id = ? LIMIT 1`,
+        [insertId],
+      );
+      if (!rows[0]) throw new Error("Created role request could not be retrieved");
+      return toRoleRequest(rows[0]);
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async findPendingByUserId(userId: number): Promise<RoleRequestRecord | null> {
+    const [rows] = await this.pool.execute<RoleRequestRow[]>(
+      `SELECT r.id, r.user_id, u.email AS user_email, r.requested_role, r.status,
+              r.reason, r.reviewed_by, rev.email AS reviewer_email, r.reviewed_at,
+              r.created_at, r.updated_at
+       FROM role_requests r
+       JOIN users u ON u.id = r.user_id
+       LEFT JOIN users rev ON rev.id = r.reviewed_by
+       WHERE r.user_id = ? AND r.status = 'pending'
+       ORDER BY r.id DESC LIMIT 1`,
+      [userId],
     );
-    const previousHash = (rows[0]?.event_hash as string | null | undefined) ?? null;
-    const createdAtDate = new Date();
-    const createdAt = createdAtDate.toISOString();
-    const detailsJson = JSON.stringify(event.details);
-    const eventHash = createAuditEventHash({
-      actorUserId: event.actorUserId,
-      documentId: event.documentId,
-      action: event.action,
-      outcome: event.outcome,
-      details: event.details,
-      createdAt,
-    }, previousHash);
-    await connection.execute(
-      `INSERT INTO audit_events
-        (actor_user_id, document_id, action, outcome, details, previous_hash, event_hash, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [event.actorUserId, event.documentId, event.action, event.outcome, detailsJson, previousHash, eventHash, createdAtDate],
+    return rows[0] ? toRoleRequest(rows[0]) : null;
+  }
+
+  async getById(id: number): Promise<RoleRequestRecord | null> {
+    const [rows] = await this.pool.execute<RoleRequestRow[]>(
+      `SELECT r.id, r.user_id, u.email AS user_email, r.requested_role, r.status,
+              r.reason, r.reviewed_by, rev.email AS reviewer_email, r.reviewed_at,
+              r.created_at, r.updated_at
+       FROM role_requests r
+       JOIN users u ON u.id = r.user_id
+       LEFT JOIN users rev ON rev.id = r.reviewed_by
+       WHERE r.id = ? LIMIT 1`,
+      [id],
     );
+    return rows[0] ? toRoleRequest(rows[0]) : null;
+  }
+
+  async listRoleRequests(status?: RoleRequestStatus): Promise<RoleRequestRecord[]> {
+    const params: unknown[] = [];
+    let where = "";
+    if (status) {
+      where = "WHERE r.status = ?";
+      params.push(status);
+    }
+    const [rows] = await this.pool.execute<RoleRequestRow[]>(
+      `SELECT r.id, r.user_id, u.email AS user_email, r.requested_role, r.status,
+              r.reason, r.reviewed_by, rev.email AS reviewer_email, r.reviewed_at,
+              r.created_at, r.updated_at
+       FROM role_requests r
+       JOIN users u ON u.id = r.user_id
+       LEFT JOIN users rev ON rev.id = r.reviewed_by
+       ${where}
+       ORDER BY r.created_at DESC, r.id DESC`,
+      params as import("mysql2").ExecuteValues[],
+    );
+    return rows.map(toRoleRequest);
+  }
+
+  async approveRoleRequest(
+    requestId: number,
+    adminUserId: number,
+  ): Promise<{ success: boolean; error?: string; request?: RoleRequestRecord }> {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT r.id, r.user_id, r.requested_role, r.status,
+                u.email AS user_email, u.role AS user_role
+         FROM role_requests r
+         JOIN users u ON u.id = r.user_id
+         WHERE r.id = ? FOR UPDATE`,
+        [requestId],
+      );
+      const row = rows[0];
+      if (!row) {
+        await connection.rollback();
+        return { success: false, error: "Role request not found" };
+      }
+      if (row.status !== "pending") {
+        await connection.rollback();
+        return { success: false, error: "Role request is not pending" };
+      }
+      // Critical security check: Existing Admin accounts must never be demoted
+      if (row.user_role === "admin") {
+        await connection.rollback();
+        return { success: false, error: "Cannot modify role of an administrator" };
+      }
+
+      await connection.execute(
+        "UPDATE role_requests SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP(3) WHERE id = ?",
+        [adminUserId, requestId],
+      );
+
+      // Only promote if current role is viewer (cannot demote or overwrite admin)
+      await connection.execute(
+        "UPDATE users SET role = 'owner' WHERE id = ? AND role = 'viewer'",
+        [row.user_id],
+      );
+
+      // Record approval in audit log
+      await appendAuditEventWithConnection(connection, {
+        actorUserId: adminUserId,
+        documentId: null,
+        action: "role_request.approve",
+        outcome: "allowed",
+        details: {
+          requestId,
+          targetUserId: row.user_id,
+          targetEmail: row.user_email,
+          requestedRole: "owner",
+        },
+      });
+
+      // Record role-change event in audit log
+      await appendAuditEventWithConnection(connection, {
+        actorUserId: adminUserId,
+        documentId: null,
+        action: "user.role_change",
+        outcome: "allowed",
+        details: {
+          targetUserId: row.user_id,
+          targetEmail: row.user_email,
+          previousRole: row.user_role,
+          newRole: "owner",
+          requestId,
+        },
+      });
+
+      await connection.commit();
+
+      const updated = await this.getById(requestId);
+      return { success: true, request: updated ?? undefined };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async rejectRoleRequest(
+    requestId: number,
+    adminUserId: number,
+    reason?: string,
+  ): Promise<{ success: boolean; error?: string; request?: RoleRequestRecord }> {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT r.id, r.user_id, r.requested_role, r.status,
+                u.email AS user_email, u.role AS user_role
+         FROM role_requests r
+         JOIN users u ON u.id = r.user_id
+         WHERE r.id = ? FOR UPDATE`,
+        [requestId],
+      );
+      const row = rows[0];
+      if (!row) {
+        await connection.rollback();
+        return { success: false, error: "Role request not found" };
+      }
+      if (row.status !== "pending") {
+        await connection.rollback();
+        return { success: false, error: "Role request is not pending" };
+      }
+
+      await connection.execute(
+        "UPDATE role_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP(3), reason = COALESCE(?, reason) WHERE id = ?",
+        [adminUserId, reason ?? null, requestId],
+      );
+
+      // Record rejection in audit log
+      await appendAuditEventWithConnection(connection, {
+        actorUserId: adminUserId,
+        documentId: null,
+        action: "role_request.reject",
+        outcome: "allowed",
+        details: {
+          requestId,
+          targetUserId: row.user_id,
+          targetEmail: row.user_email,
+          requestedRole: "owner",
+          reason: reason ?? null,
+        },
+      });
+
+      await connection.commit();
+
+      const updated = await this.getById(requestId);
+      return { success: true, request: updated ?? undefined };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async appendAudit(event: AuditInput): Promise<void> {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await appendAuditEventWithConnection(connection, event);
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 }

@@ -12,16 +12,19 @@ import {
   type Document,
   type User,
   type Permission,
+  type RoleRequest,
 } from "./api";
 import "./style.css";
 
-type View = "documents" | "audit";
+type View = "documents" | "audit" | "role-requests";
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [view, setView] = useState<View>("documents");
   const [documents, setDocuments] = useState<Document[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [roleRequests, setRoleRequests] = useState<RoleRequest[]>([]);
+  const [myPendingRequest, setMyPendingRequest] = useState<RoleRequest | null>(null);
   const [search, setSearch] = useState("");
   const [name, setName] = useState("");
   const [category, setCategory] = useState("General");
@@ -36,6 +39,9 @@ function App() {
   const [shareCanRead, setShareCanRead] = useState(true);
   const [shareCanEdit, setShareCanEdit] = useState(false);
   const [uploadingId, setUploadingId] = useState<number | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
+  const [submittingRequest, setSubmittingRequest] = useState(false);
+  const [requestReason, setRequestReason] = useState("");
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -63,13 +69,91 @@ function App() {
     }
   }, []);
 
+  const loadRoleRequests = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await admin.listRoleRequests();
+      setRoleRequests(result.requests);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load role requests.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const checkMyRoleRequest = useCallback(async () => {
+    try {
+      const result = await auth.myRoleRequest();
+      setMyPendingRequest(result.request);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
-    if (user) void loadDocuments();
-  }, [user, loadDocuments]);
+    if (user) {
+      void loadDocuments();
+      if (user.role === "viewer") {
+        void checkMyRoleRequest();
+      }
+      if (user.role === "admin") {
+        void loadRoleRequests();
+      }
+    }
+  }, [user, loadDocuments, checkMyRoleRequest, loadRoleRequests]);
 
   useEffect(() => {
     if (user?.role === "admin" && view === "audit") void loadAudit();
-  }, [user, view, loadAudit]);
+    if (user?.role === "admin" && view === "role-requests") void loadRoleRequests();
+  }, [user, view, loadAudit, loadRoleRequests]);
+
+  async function handleApprove(requestId: number) {
+    setError("");
+    setNotice("");
+    setActionLoadingId(requestId);
+    try {
+      await admin.approveRoleRequest(requestId);
+      setNotice("Owner access approved successfully.");
+      await loadRoleRequests();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve request.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  }
+
+  async function handleReject(requestId: number) {
+    const reason = window.prompt("Reason for rejection (optional):") ?? undefined;
+    setError("");
+    setNotice("");
+    setActionLoadingId(requestId);
+    try {
+      await admin.rejectRoleRequest(requestId, reason);
+      setNotice("Owner access request rejected.");
+      await loadRoleRequests();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reject request.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  }
+
+  async function handleRequestOwner() {
+    setError("");
+    setNotice("");
+    setSubmittingRequest(true);
+    try {
+      await auth.requestOwner(requestReason.trim() || undefined);
+      setNotice("Owner access request submitted! An administrator will review your request.");
+      setRequestReason("");
+      await checkMyRoleRequest();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to submit owner request.");
+    } finally {
+      setSubmittingRequest(false);
+    }
+  }
 
   if (!user) {
     return (
@@ -273,16 +357,27 @@ function App() {
           className={`nav-item ${view === "documents" ? "active" : ""}`}
           onClick={() => setView("documents")}
         >
-          <span className="nav-icon">â–¤</span> Documents
+          <span className="nav-icon">📄</span> Documents
         </button>
         {user.role === "admin" && (
           <>
             <div className="nav-section-label">Administration</div>
             <button
+              className={`nav-item ${view === "role-requests" ? "active" : ""}`}
+              onClick={() => setView("role-requests")}
+            >
+              <span className="nav-icon">👤</span> Owner requests
+              {roleRequests.filter((r) => r.status === "pending").length > 0 && (
+                <span className="tag" style={{ marginLeft: "auto", background: "rgba(245,165,36,.2)", color: "var(--accent-warn)" }}>
+                  {roleRequests.filter((r) => r.status === "pending").length}
+                </span>
+              )}
+            </button>
+            <button
               className={`nav-item ${view === "audit" ? "active" : ""}`}
               onClick={() => setView("audit")}
             >
-              <span className="nav-icon">â—·</span> Audit log
+              <span className="nav-icon">📜</span> Audit log
             </button>
           </>
         )}
@@ -292,17 +387,23 @@ function App() {
         <div className="page-header">
           <div className="page-header-text">
             <h1 className="page-title">
-              {view === "audit" ? "Audit log" : "Your documents"}
+              {view === "audit" ? "Audit log" : view === "role-requests" ? "Owner access requests" : "Your documents"}
             </h1>
             <p className="page-subtitle">
               {view === "audit"
                 ? "Review recorded document and security activity."
+                : view === "role-requests"
+                ? "Review and approve or reject user requests for Owner privileges."
                 : "Create, organize, search, and manage document records."}
             </p>
           </div>
           <button
             className="btn btn-secondary"
-            onClick={() => view === "audit" ? void loadAudit() : void loadDocuments()}
+            onClick={() => {
+              if (view === "audit") void loadAudit();
+              else if (view === "role-requests") void loadRoleRequests();
+              else void loadDocuments();
+            }}
             disabled={loading}
           >
             Refresh
@@ -314,6 +415,46 @@ function App() {
 
         {view === "documents" && (
           <>
+            {user.role === "viewer" && (
+              myPendingRequest ? (
+                <div className="alert alert-info" style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
+                  <span style={{ fontSize: "1.2rem" }}>⏳</span>
+                  <div>
+                    <strong>Owner Access Pending Approval</strong>
+                    <p style={{ margin: 0, fontSize: "var(--text-xs)", opacity: 0.85 }}>
+                      Your request for Owner privileges has been submitted and is awaiting administrator review. As a Viewer, you can view documents shared with you.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="card" style={{ padding: "var(--sp-4)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--sp-4)", flexWrap: "wrap" }}>
+                  <div>
+                    <strong style={{ fontSize: "var(--text-sm)" }}>Want to create and upload documents?</strong>
+                    <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+                      Request Owner privileges to create private documents. Requests require Administrator approval.
+                    </p>
+                  </div>
+                  <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
+                    <input
+                      type="text"
+                      placeholder="Optional reason note"
+                      value={requestReason}
+                      onChange={(e) => setRequestReason(e.target.value)}
+                      maxLength={255}
+                      style={{ fontSize: "var(--text-xs)", padding: "6px 10px", width: "180px" }}
+                    />
+                    <button
+                      className="btn btn-primary btn-sm"
+                      type="button"
+                      onClick={() => void handleRequestOwner()}
+                      disabled={submittingRequest}
+                    >
+                      {submittingRequest ? "Submitting…" : "Request Owner Access"}
+                    </button>
+                  </div>
+                </div>
+              )
+            )}
             <div className="stats-grid">
               <div className="stat-card">
                 <span className="stat-label">Accessible documents</span>
@@ -595,7 +736,7 @@ function App() {
                 <div className="empty-state"><span className="spinner spinner-lg" /></div>
               ) : events.length === 0 ? (
                 <div className="empty-state">
-                  <span className="empty-icon">â—·</span>
+                  <span className="empty-icon">📜</span>
                   <h3>No activity recorded yet</h3>
                   <p>Document actions will appear here when recorded by the server.</p>
                 </div>
@@ -607,9 +748,9 @@ function App() {
                       <div className="audit-action">{event.action}</div>
                       <div className="audit-meta">
                         {event.actorEmail ?? `User #${event.actorUserId ?? "unknown"}`}
-                        {" Â· "}
+                        {" · "}
                         {new Date(event.createdAt).toLocaleString()}
-                        {event.documentId !== null && ` Â· Document #${event.documentId}`}
+                        {event.documentId !== null && ` · Document #${event.documentId}`}
                       </div>
                       <span className={`outcome-badge ${event.outcome}`}>
                         {event.outcome}
@@ -617,6 +758,87 @@ function App() {
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          </section>
+        )}
+
+        {view === "role-requests" && user.role === "admin" && (
+          <section className="card">
+            <div className="card-header">
+              <h2 className="card-title">Owner access requests</h2>
+              <span className="tag">
+                {roleRequests.filter((r) => r.status === "pending").length} pending
+              </span>
+            </div>
+            <div className="card-body">
+              {loading ? (
+                <div className="empty-state"><span className="spinner spinner-lg" /></div>
+              ) : roleRequests.length === 0 ? (
+                <div className="empty-state">
+                  <span className="empty-icon">👥</span>
+                  <h3>No role requests found</h3>
+                  <p>When viewers request Owner privileges, their requests will appear here for review.</p>
+                </div>
+              ) : (
+                <div className="flex-col gap-4">
+                  {roleRequests.map((req) => (
+                    <div
+                      key={req.id}
+                      className="card"
+                      style={{
+                        padding: "var(--sp-4)",
+                        background: "var(--bg-overlay)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        gap: "var(--sp-4)",
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: "220px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+                          <span style={{ fontWeight: 600, fontSize: "var(--text-base)" }}>{req.userEmail}</span>
+                          <span className={`status-badge ${req.status}`}>{req.status}</span>
+                          <span className="tag" style={{ textTransform: "capitalize" }}>Target: {req.requestedRole}</span>
+                        </div>
+                        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: "4px" }}>
+                          Requested: {new Date(req.createdAt).toLocaleString()}
+                          {req.reason && ` · Note: "${req.reason}"`}
+                        </div>
+                        {req.status !== "pending" && (
+                          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", marginTop: "2px" }}>
+                            {req.status === "approved" ? "Approved" : "Rejected"} by: {req.reviewedByEmail ?? `Admin #${req.reviewedBy}`}
+                            {req.reviewedAt && ` on ${new Date(req.reviewedAt).toLocaleString()}`}
+                          </div>
+                        )}
+                      </div>
+
+                      {req.status === "pending" && (
+                        <div style={{ display: "flex", gap: "var(--sp-2)" }}>
+                          <button
+                            id={`approve-request-${req.id}`}
+                            className="btn btn-primary btn-sm"
+                            type="button"
+                            disabled={actionLoadingId === req.id}
+                            onClick={() => void handleApprove(req.id)}
+                          >
+                            {actionLoadingId === req.id ? "Processing…" : "✓ Approve"}
+                          </button>
+                          <button
+                            id={`reject-request-${req.id}`}
+                            className="btn btn-danger btn-sm"
+                            type="button"
+                            disabled={actionLoadingId === req.id}
+                            onClick={() => void handleReject(req.id)}
+                          >
+                            ✕ Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </section>

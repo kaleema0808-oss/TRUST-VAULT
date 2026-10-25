@@ -1,7 +1,7 @@
 import "./load-env.js";
 import { createApp, sanitizeErrorForLogging } from "./app.js";
 import { loadConfig } from "./config.js";
-import { MysqlAuthRepository, MysqlDocumentRepository } from "./auth/repository.js";
+import { MysqlAuthRepository, MysqlDocumentRepository, MysqlRoleRequestRepository } from "./auth/repository.js";
 import { checkDatabaseConnection, pool } from "./db/pool.js";
 import { runMigrations } from "./db/migrate.js";
 import { provisionDefaultAccounts } from "./db/provision.js";
@@ -44,6 +44,7 @@ const app = createApp(
   config,
   checkDatabaseConnection,
   new MysqlDocumentRepository(pool),
+  new MysqlRoleRequestRepository(pool),
 );
 const server = app.listen(config.apiPort, "0.0.0.0", () => {
   console.info(`TrustVault API listening on port ${config.apiPort}`);

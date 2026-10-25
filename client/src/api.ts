@@ -46,12 +46,26 @@ export type AuditEvent = {
   documentId: number | null; action: string; outcome: "allowed" | "denied";
   details: Record<string, unknown>; createdAt: string;
 };
+export type RoleRequestStatus = "pending" | "approved" | "rejected";
+export type RoleRequest = {
+  id: number;
+  userId: number;
+  userEmail: string;
+  requestedRole: "owner";
+  status: RoleRequestStatus;
+  reason: string | null;
+  reviewedBy: number | null;
+  reviewedByEmail?: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 
 // ---- Auth ---------------------------------------------------------
 export const auth = {
-  async register(email: string, password: string) {
-    return request<{ user: User; csrfToken: string }>("/api/auth/register", {
-      method: "POST", body: { email, password },
+  async register(email: string, password: string, requestOwner?: boolean, reason?: string) {
+    return request<{ user: User; csrfToken: string; pendingRoleRequest?: boolean }>("/api/auth/register", {
+      method: "POST", body: { email, password, ...(requestOwner ? { requestOwner: true, reason } : {}) },
     });
   },
   async login(email: string, password: string) {
@@ -60,7 +74,15 @@ export const auth = {
     });
   },
   async me() {
-    return request<{ user: User }>("/api/auth/me");
+    return request<{ user: User; pendingOwnerRequest?: boolean }>("/api/auth/me");
+  },
+  async requestOwner(reason?: string) {
+    return request<{ request: RoleRequest }>("/api/auth/role-requests", {
+      method: "POST", body: { reason },
+    });
+  },
+  async myRoleRequest() {
+    return request<{ request: RoleRequest | null }>("/api/auth/role-requests/mine");
   },
   async logout() {
     await request<void>("/api/auth/logout", { method: "POST", body: {} });
@@ -158,5 +180,19 @@ export const admin = {
     if (params.offset) qs.set("offset", String(params.offset));
     const q = qs.toString();
     return request<{ events: AuditEvent[] }>(`/api/admin/audit${q ? `?${q}` : ""}`);
+  },
+  async listRoleRequests(status?: RoleRequestStatus) {
+    const qs = status ? `?status=${status}` : "";
+    return request<{ requests: RoleRequest[] }>(`/api/admin/role-requests${qs}`);
+  },
+  async approveRoleRequest(id: number) {
+    return request<{ message: string; request: RoleRequest }>(`/api/admin/role-requests/${id}/approve`, {
+      method: "POST", body: {},
+    });
+  },
+  async rejectRoleRequest(id: number, reason?: string) {
+    return request<{ message: string; request: RoleRequest }>(`/api/admin/role-requests/${id}/reject`, {
+      method: "POST", body: { reason },
+    });
   },
 };

@@ -9,6 +9,8 @@ export function AuthPage({ onAuth }: Props) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [requestOwner, setRequestOwner] = useState(false);
+  const [requestReason, setRequestReason] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -19,7 +21,7 @@ export function AuthPage({ onAuth }: Props) {
     try {
       const result = mode === "login"
         ? await auth.login(email, password)
-        : await auth.register(email, password);
+        : await auth.register(email, password, requestOwner, requestReason);
       setCsrfToken(result.csrfToken);
       onAuth(result.user, result.csrfToken);
     } catch (err: unknown) {
@@ -71,6 +73,34 @@ export function AuthPage({ onAuth }: Props) {
               required
             />
           </div>
+
+          {mode === "register" && (
+            <div className="flex-col gap-2" style={{ marginTop: "var(--sp-2)" }}>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: "var(--sp-2)", cursor: "pointer" }}>
+                <input
+                  id="auth-request-owner"
+                  type="checkbox"
+                  checked={requestOwner}
+                  onChange={(e) => setRequestOwner(e.target.checked)}
+                  style={{ marginTop: "3px", width: "auto" }}
+                />
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
+                  Request <strong>Owner</strong> privileges (requires Admin review &amp; approval)
+                </span>
+              </label>
+              {requestOwner && (
+                <input
+                  id="auth-owner-reason"
+                  type="text"
+                  value={requestReason}
+                  onChange={(e) => setRequestReason(e.target.value)}
+                  placeholder="Reason for owner access (optional)"
+                  maxLength={255}
+                  style={{ fontSize: "var(--text-xs)", padding: "6px 10px" }}
+                />
+              )}
+            </div>
+          )}
 
           <button
             id="auth-submit"
