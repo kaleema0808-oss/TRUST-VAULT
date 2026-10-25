@@ -235,4 +235,21 @@ only after actual commits exist.
   - `npm run typecheck`: 0 errors across `@trustvault/server` and `@trustvault/client`.
   - `npm test`: 42 passed, 1 skipped across 6 test suites (8 new tests in `role-approval.test.ts`).
   - `npm run build`: compiled client and server cleanly with migration files copied to `dist/db/migrations`.
-- **Commit:** None, pending explicit user approval as instructed.
+- **Commit:** `dce3593c89b4994b266954758b6256210c81fecf`.
+
+## 2026-10-25 — Final submission readiness, credential rotation procedures, and end-to-end verification
+
+- **Prompt/task:** Final release preparation before challenge deadline: inspect current state, verify Owner approval workflow against production and real MySQL, run all tests, builds, and typechecks, audit secrets and rotation procedures, document ephemeral file storage limitations, and prepare truthful submission deliverables.
+- **Use:** AI performed thorough verification:
+  - Verified Git tree, latest commit `dce3593c89b4994b266954758b6256210c81fecf`, and remote sync with `origin/main`.
+  - Executed end-to-end approval workflow verification on real MySQL: validated viewer assignment upon registration with `requestOwner: true`, pending operation isolation (HTTP 403 on document creation), duplicate request prevention (HTTP 409 Conflict), non-admin authorization enforcement (HTTP 403), Admin approval promoting viewer to Owner, approved Owner document creation (HTTP 201), Admin rejection keeping user as viewer, and audit event recording across all actions.
+  - Executed live API checks on Render (`https://trustvault-api-kuht.onrender.com`): verified `health/live` (200), `health/ready` (200, database connected), client role parameter tampering rejection (400), registration with pending owner request (201), `/api/auth/me` identity reporting (200), pending document creation denial (403), duplicate request denial (409), and unauthorized approval denial (403).
+  - Inspected Vercel production deployment (`https://trust-vault-chi-cyan.vercel.app`): confirmed live registration UI includes Owner request checkbox and reason note.
+  - Documented secure credential rotation procedures via Render environment variables using `ROTATE_USER_PASSWORDS=true`.
+  - Confirmed and documented operational limitation regarding Render's ephemeral filesystem storage for uploaded files vs. MySQL database persistence.
+- **Verification:**
+  - `npm run typecheck`: 0 errors across `@trustvault/server` and `@trustvault/client`.
+  - `npm test`: 42 passed, 1 skipped (isolated test DB schema).
+  - `npm run build`: cleanly compiles server and client production bundles.
+  - All 8 comprehensive tests in `role-approval.test.ts` passed.
+
